@@ -127,83 +127,65 @@ static uint64_t get_time_ms()
 	// Start Emulation Worker Thread
 	g_emu_running = true;
 	g_emu_thread = std::thread([self]() {
-		int total_frames = 0, draw_frames = 0, skip_frames = 0;
-		uint64_t next_time = 0;
-		bool prev_skip = false;
-		uint64_t update_fps_time = 0;
+		using clock = std::chrono::steady_clock;
+		auto next_frame_time = clock::now();
+		auto last_fps_update = clock::now();
+		int total_frames = 0, draw_frames = 0;
+		int sec_count = 0;
 
 		while(g_emu_running) {
 			if(g_emu) {
+				double fps = g_emu->get_frame_rate();
+				if(fps <= 0.0) fps = 60.0;
+				auto frame_duration = std::chrono::duration_cast<clock::duration>(
+					std::chrono::duration<double>(1.0 / fps)
+				);
+
 				int run_frames = 0;
 				{
 					g_emu->get_osd()->lock_vm();
 					run_frames = g_emu->run();
+					draw_frames += g_emu->draw_screen();
 					g_emu->get_osd()->unlock_vm();
 				}
 				total_frames += run_frames;
+				[self.metalView updateFrame];
 
-				int sleep_period = 0;
 				bool now_skip = (config.full_speed || g_emu->is_frame_skippable());
 
-				if((prev_skip && !now_skip) || next_time == 0) {
-					next_time = get_time_ms();
-				}
 				if(!now_skip) {
-					static int accum = 0;
-					accum += g_emu->get_frame_interval();
-					int interval = accum >> 10;
-					accum -= interval << 10;
-					next_time += interval;
-				}
-				prev_skip = now_skip;
-
-				uint64_t current_time = get_time_ms();
-				if(next_time > current_time) {
-					{
-						g_emu->get_osd()->lock_vm();
-						draw_frames += g_emu->draw_screen();
-						g_emu->get_osd()->unlock_vm();
+					next_frame_time += frame_duration;
+					auto current_time = clock::now();
+					if(next_frame_time > current_time) {
+						std::this_thread::sleep_until(next_frame_time);
+					} else {
+						// Falling behind: reset timeline if more than 4 frames behind
+						if(current_time - next_frame_time > frame_duration * 4) {
+							next_frame_time = current_time;
+						}
 					}
-					[self.metalView updateFrame];
-					skip_frames = 0;
-					if((int)(next_time - current_time) >= 5) {
-						sleep_period = (int)(next_time - current_time);
-					}
-				} else if(++skip_frames > (int)g_emu->get_frame_rate()) {
-					{
-						g_emu->get_osd()->lock_vm();
-						draw_frames += g_emu->draw_screen();
-						g_emu->get_osd()->unlock_vm();
-					}
-					[self.metalView updateFrame];
-					skip_frames = 0;
-					next_time = get_time_ms();
-				}
-
-				if(sleep_period > 0) {
-					std::this_thread::sleep_for(std::chrono::milliseconds(sleep_period));
 				} else {
+					next_frame_time = clock::now();
 					std::this_thread::yield();
 				}
 
-				// FPS update
-				if(update_fps_time <= current_time) {
-					if(update_fps_time != 0) {
-						static int sec_count = 0;
-						if(getenv("RETROPC_SCREENSHOT") && ++sec_count >= 3) {
-							g_emu->get_osd()->capture_screen();
-							dispatch_async(dispatch_get_main_queue(), ^{
-								[NSApp terminate:nil];
-							});
-						}
+				// FPS & Screenshot update every 1 second
+				auto current_time = clock::now();
+				if(current_time - last_fps_update >= std::chrono::seconds(1)) {
+					if(getenv("RETROPC_SCREENSHOT") && ++sec_count >= 3) {
+						g_emu->get_osd()->capture_screen();
 						dispatch_async(dispatch_get_main_queue(), ^{
-							int ratio = (total_frames > 0) ? (int)(100.0 * draw_frames / total_frames + 0.5) : 100;
-							NSString *t = [NSString stringWithFormat:@"%s - %d fps (%d%%)", g_emu->device_name(), draw_frames, ratio];
-							[self.window setTitle:t];
+							[NSApp terminate:nil];
 						});
-						total_frames = draw_frames = 0;
 					}
-					update_fps_time = current_time + 1000;
+					int ratio = (total_frames > 0) ? (int)(100.0 * draw_frames / total_frames + 0.5) : 100;
+					int reported_fps = draw_frames;
+					dispatch_async(dispatch_get_main_queue(), ^{
+						NSString *t = [NSString stringWithFormat:@"%s - %d fps (%d%%)", g_emu->device_name(), reported_fps, ratio];
+						[self.window setTitle:t];
+					});
+					total_frames = draw_frames = 0;
+					last_fps_update = current_time;
 				}
 			}
 		}
