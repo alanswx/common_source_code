@@ -154,7 +154,7 @@ static uint64_t get_time_ms()
 				bool now_skip = (config.full_speed || g_emu->is_frame_skippable());
 
 				if(!now_skip) {
-					next_frame_time += frame_duration;
+					next_frame_time += frame_duration * (run_frames > 0 ? run_frames : 1);
 					auto current_time = clock::now();
 					if(next_frame_time > current_time) {
 						std::this_thread::sleep_until(next_frame_time);
@@ -180,6 +180,7 @@ static uint64_t get_time_ms()
 					}
 					int ratio = (total_frames > 0) ? (int)(100.0 * draw_frames / total_frames + 0.5) : 100;
 					int reported_fps = draw_frames;
+					fprintf(stderr, "[FPS UPDATE] %s: %d fps (%d%%)\n", g_emu->device_name(), reported_fps, ratio);
 					dispatch_async(dispatch_get_main_queue(), ^{
 						NSString *t = [NSString stringWithFormat:@"%s - %d fps (%d%%)", g_emu->device_name(), reported_fps, ratio];
 						[self.window setTitle:t];

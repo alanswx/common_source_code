@@ -20,6 +20,7 @@ extern void mac_sound_init(int rate, int samples);
 extern void mac_sound_release();
 extern void mac_sound_write(const uint16_t* buffer, int samples);
 extern void mac_sound_mute(bool mute);
+extern int mac_sound_get_buffered_samples();
 
 OSD::OSD()
 {
@@ -291,9 +292,11 @@ void OSD::update_sound(int* extra_frames)
 {
 	*extra_frames = 0;
 	if(sound_available && vm) {
-		uint16_t* buffer = vm->create_sound(extra_frames);
-		if(buffer && !sound_muted) {
-			mac_sound_write(buffer, sound_samples);
+		if(vm->get_sound_buffer_ptr() >= sound_samples) {
+			uint16_t* buffer = vm->create_sound(extra_frames);
+			if(buffer && !sound_muted) {
+				mac_sound_write(buffer, sound_samples);
+			}
 		}
 	}
 }

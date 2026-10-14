@@ -137,3 +137,9 @@ void mac_sound_mute(bool mute)
 {
 	g_sound_muted = mute;
 }
+
+int mac_sound_get_buffered_samples()
+{
+	if(!g_audio_queue || !g_sound_running) return 0;
+	return (g_ring_write_pos - g_ring_read_pos + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES;
+}
