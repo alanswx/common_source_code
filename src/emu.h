@@ -35,6 +35,11 @@
 #elif defined(_USE_SDL)
 #include <pthread.h>
 #define OSD_SDL
+#elif defined(OSD_MAC) || defined(__APPLE__)
+#include <pthread.h>
+#ifndef OSD_MAC
+#define OSD_MAC
+#endif
 #elif defined(_WIN32)
 #define OSD_WIN32
 #else
@@ -44,7 +49,9 @@
 // OS dependent header files should be included in each osd.h
 // Please do not include them in emu.h
 
-#if defined(OSD_QT)
+#if defined(OSD_MAC)
+#include "mac/osd.h"
+#elif defined(OSD_QT)
 #include "qt/osd.h"
 #elif defined(OSD_SDL)
 #include "sdl/osd.h"
@@ -402,6 +409,8 @@ public:
 	CSP_Debugger *hDebugger;
 #elif defined(OSD_WIN32)
 	HANDLE hDebuggerThread;
+#elif defined(OSD_MAC) || defined(OSD_SDL)
+	pthread_t debugger_thread_id;
 #else
 	int debugger_thread_id;
 #endif

@@ -1,0 +1,427 @@
+/*
+	Skelton for retropc emulator
+
+	Author : Takeda.Toshiya
+	Date   : 2006.08.18 -
+
+	[ macOS Application Frontend ]
+*/
+
+#import <Cocoa/Cocoa.h>
+#import <Metal/Metal.h>
+#include <chrono>
+#include <thread>
+#include <atomic>
+
+#include "osd.h"
+#include "../emu.h"
+#include "../config.h"
+#include "../res/resource.h"
+#import "MetalView.h"
+
+static EMU* g_emu = nullptr;
+static std::atomic<bool> g_emu_running(false);
+static std::thread g_emu_thread;
+
+static uint64_t get_time_ms()
+{
+	using namespace std::chrono;
+	return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+@interface AppDelegate : NSObject <NSApplicationDelegate, NSWindowDelegate>
+
+@property (strong, nonatomic) NSWindow *window;
+@property (strong, nonatomic) MetalView *metalView;
+@property (strong, nonatomic) NSStatusItem *statusItem;
+
+- (void)handleCommand:(NSInteger)cmdId;
+- (void)openFloppyDialog:(int)drv;
+- (void)openTapeDialog:(bool)play;
+- (void)openAnyFile:(NSString *)path;
+
+@end
+
+@implementation AppDelegate
+
+- (void)applicationDidFinishLaunching:(NSNotification *)notification
+{
+	// Load Configuration
+	load_config(create_local_path(_T("%s.ini"), _T(CONFIG_NAME)));
+
+	// Initialize emulation core
+	g_emu = new EMU();
+
+	int initialWidth = (g_emu->get_osd()->get_vm_window_width() > 0) ? g_emu->get_osd()->get_vm_window_width() * 2 : 640;
+	int initialHeight = (g_emu->get_osd()->get_vm_window_height_aspect() > 0) ? g_emu->get_osd()->get_vm_window_height_aspect() * 2 : 480;
+
+	NSRect frame = NSMakeRect(0, 0, initialWidth, initialHeight);
+	NSWindowStyleMask style = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskMiniaturizable | NSWindowStyleMaskResizable;
+
+	self.window = [[NSWindow alloc] initWithContentRect:frame
+	                                          styleMask:style
+	                                            backing:NSBackingStoreBuffered
+	                                              defer:NO];
+
+	NSString *title = [NSString stringWithUTF8String:g_emu->device_name()];
+	[self.window setTitle:title];
+	[self.window center];
+	[self.window setDelegate:self];
+
+	// Create Metal View
+	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+	self.metalView = [[MetalView alloc] initWithFrame:frame device:device osd:g_emu->get_osd()];
+	self.metalView.windowWidthAspect = g_emu->get_osd()->get_vm_window_width_aspect();
+	self.metalView.windowHeightAspect = g_emu->get_osd()->get_vm_window_height_aspect();
+
+	__weak AppDelegate *weakSelf = self;
+	self.metalView.onFileDropped = ^(NSString *path) {
+		[weakSelf openAnyFile:path];
+	};
+
+	[self.window setContentView:self.metalView];
+	[self.window makeKeyAndOrderFront:nil];
+	[self.window makeFirstResponder:self.metalView];
+
+	// Build Menu Bar
+	[self setupMenus];
+
+	// Start Emulation Worker Thread
+	g_emu_running = true;
+	g_emu_thread = std::thread([self]() {
+		int total_frames = 0, draw_frames = 0, skip_frames = 0;
+		uint64_t next_time = 0;
+		bool prev_skip = false;
+		uint64_t update_fps_time = 0;
+
+		while(g_emu_running) {
+			if(g_emu) {
+				int run_frames = g_emu->run();
+				total_frames += run_frames;
+
+				int sleep_period = 0;
+				bool now_skip = (config.full_speed || g_emu->is_frame_skippable());
+
+				if((prev_skip && !now_skip) || next_time == 0) {
+					next_time = get_time_ms();
+				}
+				if(!now_skip) {
+					static int accum = 0;
+					accum += g_emu->get_frame_interval();
+					int interval = accum >> 10;
+					accum -= interval << 10;
+					next_time += interval;
+				}
+				prev_skip = now_skip;
+
+				uint64_t current_time = get_time_ms();
+				if(next_time > current_time) {
+					draw_frames += g_emu->draw_screen();
+					[self.metalView updateFrame];
+					skip_frames = 0;
+					if((int)(next_time - current_time) >= 5) {
+						sleep_period = (int)(next_time - current_time);
+					}
+				} else if(++skip_frames > (int)g_emu->get_frame_rate()) {
+					draw_frames += g_emu->draw_screen();
+					[self.metalView updateFrame];
+					skip_frames = 0;
+					next_time = get_time_ms();
+				}
+
+				if(sleep_period > 0) {
+					std::this_thread::sleep_for(std::chrono::milliseconds(sleep_period));
+				} else {
+					std::this_thread::yield();
+				}
+
+				// FPS update
+				if(update_fps_time <= current_time) {
+					if(update_fps_time != 0) {
+						dispatch_async(dispatch_get_main_queue(), ^{
+							int ratio = (total_frames > 0) ? (int)(100.0 * draw_frames / total_frames + 0.5) : 100;
+							NSString *t = [NSString stringWithFormat:@"%s - %d fps (%d%%)", g_emu->device_name(), draw_frames, ratio];
+							[self.window setTitle:t];
+						});
+						total_frames = draw_frames = 0;
+					}
+					update_fps_time = current_time + 1000;
+				}
+			}
+		}
+	});
+}
+
+- (void)applicationWillTerminate:(NSNotification *)notification
+{
+	g_emu_running = false;
+	if(g_emu_thread.joinable()) {
+		g_emu_thread.join();
+	}
+	if(g_emu) {
+		delete g_emu;
+		g_emu = nullptr;
+	}
+	save_config(create_local_path(_T("%s.ini"), _T(CONFIG_NAME)));
+}
+
+- (BOOL)applicationShouldTerminateAfterLastWindowClosed:(NSApplication *)sender
+{
+	return YES;
+}
+
+// ----------------------------------------------------------------------------
+// Menus
+// ----------------------------------------------------------------------------
+
+- (void)setupMenus
+{
+	NSMenu *menubar = [[NSMenu alloc] init];
+
+	// App Menu
+	NSMenuItem *appMenuItem = [[NSMenuItem alloc] init];
+	NSMenu *appMenu = [[NSMenu alloc] init];
+	[appMenu addItemWithTitle:[NSString stringWithFormat:@"About %s", g_emu ? g_emu->device_name() : "RetroPC"]
+	                   action:@selector(orderFrontStandardAboutPanel:)
+	            keyEquivalent:@""];
+	[appMenu addItem:[NSMenuItem separatorItem]];
+	[appMenu addItemWithTitle:@"Hide" action:@selector(hide:) keyEquivalent:@"h"];
+	[appMenu addItemWithTitle:@"Hide Others" action:@selector(hideOtherApplications:) keyEquivalent:@"h"];
+	[[appMenu itemArray].lastObject setKeyEquivalentModifierMask:NSEventModifierFlagOption | NSEventModifierFlagCommand];
+	[appMenu addItemWithTitle:@"Show All" action:@selector(unhideAllApplications:) keyEquivalent:@""];
+	[appMenu addItem:[NSMenuItem separatorItem]];
+	[appMenu addItemWithTitle:@"Quit" action:@selector(terminate:) keyEquivalent:@"q"];
+	appMenuItem.submenu = appMenu;
+	[menubar addItem:appMenuItem];
+
+	// Control Menu
+	NSMenuItem *ctrlMenuItem = [[NSMenuItem alloc] init];
+	NSMenu *ctrlMenu = [[NSMenu alloc] initWithTitle:@"Control"];
+	[self addMenuItemTo:ctrlMenu title:@"Reset" tag:ID_RESET key:@"r"];
+	[ctrlMenu addItem:[NSMenuItem separatorItem]];
+	[self addMenuItemTo:ctrlMenu title:@"CPU Speed x1" tag:ID_CPU_POWER0 key:@"1"];
+	[self addMenuItemTo:ctrlMenu title:@"CPU Speed x2" tag:ID_CPU_POWER1 key:@"2"];
+	[self addMenuItemTo:ctrlMenu title:@"CPU Speed x4" tag:ID_CPU_POWER2 key:@"3"];
+	[self addMenuItemTo:ctrlMenu title:@"CPU Speed x8" tag:ID_CPU_POWER3 key:@"4"];
+	[self addMenuItemTo:ctrlMenu title:@"CPU Speed x16" tag:ID_CPU_POWER4 key:@"5"];
+	[self addMenuItemTo:ctrlMenu title:@"Full Speed" tag:ID_FULL_SPEED key:@"0"];
+	[ctrlMenu addItem:[NSMenuItem separatorItem]];
+	[self addMenuItemTo:ctrlMenu title:@"Paste Clipboard" tag:ID_AUTOKEY_START key:@"v"];
+	[ctrlMenu addItem:[NSMenuItem separatorItem]];
+
+	// Save / Load state submenus
+	NSMenuItem *saveItem = [self addSubmenuTo:ctrlMenu title:@"Save State"];
+	for(int i = 0; i < 10; i++) {
+		[self addMenuItemTo:saveItem.submenu title:[NSString stringWithFormat:@"State %d", i] tag:ID_SAVE_STATE0 + i key:@""];
+	}
+	NSMenuItem *loadItem = [self addSubmenuTo:ctrlMenu title:@"Load State"];
+	for(int i = 0; i < 10; i++) {
+		[self addMenuItemTo:loadItem.submenu title:[NSString stringWithFormat:@"State %d", i] tag:ID_LOAD_STATE0 + i key:@""];
+	}
+
+	ctrlMenuItem.submenu = ctrlMenu;
+	[menubar addItem:ctrlMenuItem];
+
+	// CMT (Tape) Menu
+#ifdef USE_TAPE
+	NSMenuItem *tapeMenuItem = [[NSMenuItem alloc] init];
+	NSMenu *tapeMenu = [[NSMenu alloc] initWithTitle:@"Tape"];
+	[self addMenuItemTo:tapeMenu title:@"Play Tape..." tag:ID_PLAY_TAPE1 key:@"p"];
+	[self addMenuItemTo:tapeMenu title:@"Record Tape..." tag:ID_REC_TAPE1 key:@""];
+	[self addMenuItemTo:tapeMenu title:@"Eject Tape" tag:ID_CLOSE_TAPE1 key:@""];
+	[tapeMenu addItem:[NSMenuItem separatorItem]];
+	[self addMenuItemTo:tapeMenu title:@"Play Button" tag:ID_PLAY_BUTTON1 key:@""];
+	[self addMenuItemTo:tapeMenu title:@"Stop Button" tag:ID_STOP_BUTTON1 key:@""];
+	[self addMenuItemTo:tapeMenu title:@"Fast Forward" tag:ID_FAST_FORWARD1 key:@""];
+	[self addMenuItemTo:tapeMenu title:@"Fast Rewind" tag:ID_FAST_REWIND1 key:@""];
+	tapeMenuItem.submenu = tapeMenu;
+	[menubar addItem:tapeMenuItem];
+#endif
+
+	// Floppy Drives (FD1 - FD4)
+#ifdef USE_FLOPPY_DISK
+	for(int d = 0; d < USE_FLOPPY_DISK; d++) {
+		NSMenuItem *fdMenuItem = [[NSMenuItem alloc] init];
+		NSString *fdTitle = [NSString stringWithFormat:@"FD%d", d + 1];
+		NSMenu *fdMenu = [[NSMenu alloc] initWithTitle:fdTitle];
+		NSString *shortcut = (d == 0) ? @"o" : @"";
+		[self addMenuItemTo:fdMenu title:@"Insert Disk Image..." tag:ID_OPEN_FD1 + d key:shortcut];
+		[self addMenuItemTo:fdMenu title:@"Eject" tag:ID_CLOSE_FD1 + d key:@""];
+		[fdMenu addItem:[NSMenuItem separatorItem]];
+		[self addMenuItemTo:fdMenu title:@"Insert Blank 2D Disk" tag:ID_OPEN_BLANK_2D_FD1 + d key:@""];
+		[fdMenu addItem:[NSMenuItem separatorItem]];
+		[self addMenuItemTo:fdMenu title:@"Write Protected" tag:ID_WRITE_PROTECT_FD1 + d key:@""];
+		fdMenuItem.submenu = fdMenu;
+		[menubar addItem:fdMenuItem];
+	}
+#endif
+
+	// Screen Menu
+	NSMenuItem *screenMenuItem = [[NSMenuItem alloc] init];
+	NSMenu *screenMenu = [[NSMenu alloc] initWithTitle:@"Screen"];
+	[self addMenuItemTo:screenMenu title:@"Window 1x" tag:ID_SCREEN_WINDOW + 0 key:@""];
+	[self addMenuItemTo:screenMenu title:@"Window 2x" tag:ID_SCREEN_WINDOW + 1 key:@""];
+	[self addMenuItemTo:screenMenu title:@"Window 3x" tag:ID_SCREEN_WINDOW + 2 key:@""];
+	[self addMenuItemTo:screenMenu title:@"Window 4x" tag:ID_SCREEN_WINDOW + 3 key:@""];
+	[screenMenu addItem:[NSMenuItem separatorItem]];
+	[self addMenuItemTo:screenMenu title:@"Toggle Fullscreen" tag:ID_ACCEL_SCREEN key:@"f"];
+	[self addMenuItemTo:screenMenu title:@"Capture Screenshot" tag:ID_HOST_CAPTURE_SCREEN key:@"s"];
+	screenMenuItem.submenu = screenMenu;
+	[menubar addItem:screenMenuItem];
+
+	[NSApp setMainMenu:menubar];
+}
+
+- (NSMenuItem *)addMenuItemTo:(NSMenu *)menu title:(NSString *)title tag:(NSInteger)tag key:(NSString *)key
+{
+	NSMenuItem *item = [[NSMenuItem alloc] initWithTitle:title action:@selector(menuAction:) keyEquivalent:key];
+	item.target = self;
+	item.tag = tag;
+	[menu addItem:item];
+	return item;
+}
+
+- (NSMenuItem *)addSubmenuTo:(NSMenu *)menu title:(NSString *)title
+{
+	NSMenuItem *parent = [[NSMenuItem alloc] init];
+	parent.title = title;
+	NSMenu *submenu = [[NSMenu alloc] initWithTitle:title];
+	parent.submenu = submenu;
+	[menu addItem:parent];
+	return parent;
+}
+
+- (void)menuAction:(NSMenuItem *)sender
+{
+	[self handleCommand:sender.tag];
+}
+
+- (void)handleCommand:(NSInteger)cmdId
+{
+	if(!g_emu) return;
+
+	if(cmdId == ID_RESET) {
+		g_emu->get_osd()->lock_vm();
+		g_emu->reset();
+		g_emu->get_osd()->unlock_vm();
+	} else if(cmdId >= ID_CPU_POWER0 && cmdId <= ID_CPU_POWER4) {
+		config.cpu_power = (int)(cmdId - ID_CPU_POWER0);
+		g_emu->update_config();
+	} else if(cmdId == ID_FULL_SPEED) {
+		config.full_speed = !config.full_speed;
+#ifdef USE_STATE
+	} else if(cmdId >= ID_SAVE_STATE0 && cmdId <= ID_SAVE_STATE9) {
+		int state = (int)(cmdId - ID_SAVE_STATE0);
+		g_emu->save_state(g_emu->state_file_path(state));
+	} else if(cmdId >= ID_LOAD_STATE0 && cmdId <= ID_LOAD_STATE9) {
+		int state = (int)(cmdId - ID_LOAD_STATE0);
+		g_emu->load_state(g_emu->state_file_path(state));
+#endif
+	} else if(cmdId == ID_HOST_CAPTURE_SCREEN) {
+		g_emu->get_osd()->capture_screen();
+	} else if(cmdId == ID_ACCEL_SCREEN) {
+		[self.window toggleFullScreen:nil];
+	} else if(cmdId >= ID_SCREEN_WINDOW && cmdId <= ID_SCREEN_WINDOW + 4) {
+		int factor = (int)(cmdId - ID_SCREEN_WINDOW + 1);
+		int w = g_emu->get_osd()->get_vm_window_width() * factor;
+		int h = g_emu->get_osd()->get_vm_window_height_aspect() * factor;
+		NSRect f = self.window.frame;
+		f.size = NSMakeSize(w, h);
+		[self.window setFrame:f display:YES animate:YES];
+	}
+#ifdef USE_FLOPPY_DISK
+	else if(cmdId >= ID_OPEN_FD1 && cmdId < ID_OPEN_FD1 + 4) {
+		[self openFloppyDialog:(int)(cmdId - ID_OPEN_FD1)];
+	} else if(cmdId >= ID_CLOSE_FD1 && cmdId < ID_CLOSE_FD1 + 4) {
+		g_emu->close_floppy_disk((int)(cmdId - ID_CLOSE_FD1));
+	}
+#endif
+#ifdef USE_TAPE
+	else if(cmdId == ID_PLAY_TAPE1) {
+		[self openTapeDialog:true];
+	} else if(cmdId == ID_REC_TAPE1) {
+		[self openTapeDialog:false];
+	} else if(cmdId == ID_CLOSE_TAPE1) {
+		g_emu->close_tape(0);
+	} else if(cmdId == ID_PLAY_BUTTON1) {
+		g_emu->push_play(0);
+	} else if(cmdId == ID_STOP_BUTTON1) {
+		g_emu->push_stop(0);
+	} else if(cmdId == ID_FAST_FORWARD1) {
+		g_emu->push_fast_forward(0);
+	} else if(cmdId == ID_FAST_REWIND1) {
+		g_emu->push_fast_rewind(0);
+	}
+#endif
+}
+
+- (void)openFloppyDialog:(int)drv
+{
+	NSOpenPanel *panel = [NSOpenPanel openPanel];
+	panel.canChooseFiles = YES;
+	panel.canChooseDirectories = NO;
+	panel.allowsMultipleSelection = NO;
+	panel.allowedFileTypes = @[@"d88", @"d77", @"tfd", @"2d", @"dim", @"img", @"bin"];
+
+	if([panel runModal] == NSModalResponseOK) {
+		NSURL *url = panel.URLs.firstObject;
+		if(url && g_emu) {
+			g_emu->open_floppy_disk(drv, [url.path UTF8String], 0);
+		}
+	}
+}
+
+- (void)openTapeDialog:(bool)play
+{
+	NSOpenPanel *panel = [NSOpenPanel openPanel];
+	panel.canChooseFiles = YES;
+	panel.canChooseDirectories = NO;
+	panel.allowsMultipleSelection = NO;
+	panel.allowedFileTypes = @[@"mzf", @"m12", @"wav", @"cas", @"t88", @"cmt"];
+
+	if([panel runModal] == NSModalResponseOK) {
+		NSURL *url = panel.URLs.firstObject;
+		if(url && g_emu) {
+			if(play) {
+				g_emu->play_tape(0, [url.path UTF8String]);
+			} else {
+				g_emu->rec_tape(0, [url.path UTF8String]);
+			}
+		}
+	}
+}
+
+- (void)openAnyFile:(NSString *)path
+{
+	if(!g_emu || !path) return;
+	NSString *ext = [[path pathExtension] lowercaseString];
+
+	if([ext isEqualToString:@"d88"] || [ext isEqualToString:@"d77"] || [ext isEqualToString:@"tfd"] || [ext isEqualToString:@"2d"]) {
+#ifdef USE_FLOPPY_DISK
+		g_emu->open_floppy_disk(0, [path UTF8String], 0);
+#endif
+	} else if([ext isEqualToString:@"mzf"] || [ext isEqualToString:@"m12"] || [ext isEqualToString:@"wav"] || [ext isEqualToString:@"cas"]) {
+#ifdef USE_TAPE
+		g_emu->play_tape(0, [path UTF8String]);
+#endif
+	} else if([ext isEqualToString:@"rom"] || [ext isEqualToString:@"bin"]) {
+#ifdef USE_CART
+		g_emu->open_cart(0, [path UTF8String]);
+#endif
+	}
+}
+
+@end
+
+int main(int argc, const char * argv[])
+{
+	@autoreleasepool {
+		NSApplication *app = [NSApplication sharedApplication];
+		[app setActivationPolicy:NSApplicationActivationPolicyRegular];
+		AppDelegate *delegate = [[AppDelegate alloc] init];
+		[app setDelegate:delegate];
+		[app activateIgnoringOtherApps:YES];
+		[app run];
+	}
+	return 0;
+}

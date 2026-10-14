@@ -81,6 +81,72 @@ FILEIO::~FILEIO(void)
 	Fclose();
 }
 
+#if defined(__APPLE__)
+static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _TCHAR* resolved_path)
+{
+	if(!file_path || file_path[0] == '\0') return NULL;
+
+	const char *marker = "/Contents/MacOS/";
+	const char *found = strstr(file_path, marker);
+	if(found != NULL) {
+		const char *filename = found + strlen(marker);
+		char try_path[_MAX_PATH];
+		size_t prefix_len = found - file_path;
+
+		// 1. Try Contents/Resources/
+		if(prefix_len + strlen("/Contents/Resources/") + strlen(filename) < _MAX_PATH) {
+			strncpy(try_path, file_path, prefix_len);
+			try_path[prefix_len] = '\0';
+			strcat(try_path, "/Contents/Resources/");
+			strcat(try_path, filename);
+			FILE *f = _tfopen(try_path, fmode);
+			if(f != NULL) {
+				if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+				return f;
+			}
+		}
+
+		// 2. Try directory containing the .app bundle
+		char app_dir[_MAX_PATH];
+		if(prefix_len < _MAX_PATH) {
+			strncpy(app_dir, file_path, prefix_len);
+			app_dir[prefix_len] = '\0';
+			char *last_slash = strrchr(app_dir, '/');
+			if(last_slash != NULL) {
+				*(last_slash + 1) = '\0';
+				if(strlen(app_dir) + strlen(filename) < _MAX_PATH) {
+					my_stprintf_s(try_path, _MAX_PATH, _T("%s%s"), app_dir, filename);
+					FILE *f = _tfopen(try_path, fmode);
+					if(f != NULL) {
+						if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+						return f;
+					}
+				}
+			}
+		}
+
+		// 3. Try ~/Library/Application Support/CommonSourceCodeProject/<filename>
+		const char *home = getenv("HOME");
+		if(home != NULL) {
+			my_stprintf_s(try_path, _MAX_PATH, _T("%s/Library/Application Support/CommonSourceCodeProject/%s"), home, filename);
+			FILE *f = _tfopen(try_path, fmode);
+			if(f != NULL) {
+				if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+				return f;
+			}
+		}
+
+		// 4. Try current working directory
+		FILE *f = _tfopen(filename, fmode);
+		if(f != NULL) {
+			if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, filename);
+			return f;
+		}
+	}
+	return NULL;
+}
+#endif
+
 bool FILEIO::IsFileExisting(const _TCHAR *file_path)
 {
 #if defined(_USE_QT) || defined(_USE_SDL)
@@ -97,7 +163,15 @@ bool FILEIO::IsFileExisting(const _TCHAR *file_path)
 	}
 	return ((attr & FILE_ATTRIBUTE_DIRECTORY) == 0);
 #else
-	return (_taccess(file_path, 0) == 0);
+	if(_taccess(file_path, 0) == 0) return true;
+#if defined(__APPLE__)
+	FILE *f = mac_fallback_fopen(file_path, _T("rb"), NULL);
+	if(f != NULL) {
+		fclose(f);
+		return true;
+	}
+#endif
+	return false;
 #endif
 }
 
@@ -159,7 +233,11 @@ bool FILEIO::Fopen(const _TCHAR *file_path, int mode)
 #endif
 	switch(mode) {
 	case FILEIO_READ_BINARY:
-		return ((fp = _tfopen(file_path, _T("rb"))) != NULL);
+		if((fp = _tfopen(file_path, _T("rb"))) != NULL) return true;
+#if defined(__APPLE__)
+		if((fp = mac_fallback_fopen(file_path, _T("rb"), path)) != NULL) return true;
+#endif
+		return false;
 	case FILEIO_WRITE_BINARY:
 		return ((fp = _tfopen(file_path, _T("wb"))) != NULL);
 	case FILEIO_READ_WRITE_BINARY:
@@ -167,7 +245,11 @@ bool FILEIO::Fopen(const _TCHAR *file_path, int mode)
 	case FILEIO_READ_WRITE_NEW_BINARY:
 		return ((fp = _tfopen(file_path, _T("w+b"))) != NULL);
 	case FILEIO_READ_ASCII:
-		return ((fp = _tfopen(file_path, _T("r"))) != NULL);
+		if((fp = _tfopen(file_path, _T("r"))) != NULL) return true;
+#if defined(__APPLE__)
+		if((fp = mac_fallback_fopen(file_path, _T("r"), path)) != NULL) return true;
+#endif
+		return false;
 	case FILEIO_WRITE_ASCII:
 		return ((fp = _tfopen(file_path, _T("w"))) != NULL);
 	case FILEIO_WRITE_APPEND_ASCII:

@@ -109,7 +109,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
 #include <io.h>
+#else
+#include <unistd.h>
+#endif
 #include <math.h>
 #ifdef _MSC_VER
 	#if _MSC_VER < 1920
@@ -219,8 +223,12 @@
 	#ifndef LPCTSTR
 		typedef const _TCHAR* LPCTSTR;
 	#endif
-	#ifndef BOOL
-		typedef int BOOL;
+	#if defined(__OBJC__)
+		#include <objc/objc.h>
+	#elif !defined(OBJC_BOOL_DEFINED)
+		#ifndef BOOL
+			typedef int BOOL;
+		#endif
 	#endif
 	#ifndef TRUE
 		#define TRUE 1
@@ -269,6 +277,12 @@
 	#endif
 	#ifndef UINT
 		typedef unsigned int UINT;
+	#endif
+	#ifndef LONG_PTR
+		typedef intptr_t LONG_PTR;
+	#endif
+	#ifndef ULONG_PTR
+		typedef uintptr_t ULONG_PTR;
 	#endif
 #endif
 
@@ -800,6 +814,10 @@ int16_t DLL_PREFIX ExchangeEndianS16(uint16_t x);
 	int DLL_PREFIX min(unsigned int a, int b);
 	int DLL_PREFIX min(int a, unsigned int b);
 	unsigned int DLL_PREFIX min(unsigned int a, unsigned int b);
+	inline size_t min(size_t a, unsigned int b) { return (a < (size_t)b) ? a : (size_t)b; }
+	inline size_t min(unsigned int a, size_t b) { return ((size_t)a < b) ? (size_t)a : b; }
+	inline size_t max(size_t a, unsigned int b) { return (a > (size_t)b) ? a : (size_t)b; }
+	inline size_t max(unsigned int a, size_t b) { return ((size_t)a > b) ? (size_t)a : b; }
 #endif
 
 // string
@@ -813,7 +831,7 @@ int16_t DLL_PREFIX ExchangeEndianS16(uint16_t x);
 		#define _fgetts fgets
 	#endif
 	#ifndef _ftprintf
-		#define _ftprintf printf
+		#define _ftprintf fprintf
 	#endif
 	#ifndef _tfopen
 		#define _tfopen fopen

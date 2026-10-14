@@ -29,6 +29,15 @@
 	#pragma comment(lib, "shlwapi.lib")
 #else
 	#include <time.h>
+	#include <string>
+	#include <algorithm>
+	#include <cctype>
+	#include <wchar.h>
+	#if defined(__APPLE__)
+		#include <mach-o/dyld.h>
+		#include <sys/stat.h>
+		#include <unistd.h>
+	#endif
 #endif
 #include <math.h>
 #include "common.h"
@@ -362,7 +371,11 @@ int DLL_PREFIX my_swprintf_s(wchar_t *buffer, size_t sizeOfBuffer, const wchar_t
 {
 	va_list ap;
 	va_start(ap, format);
+#if defined(_WIN32) && defined(_MSC_VER)
 	int result = vswprintf(buffer, format, ap);
+#else
+	int result = vswprintf(buffer, sizeOfBuffer, format, ap);
+#endif
 	va_end(ap);
 	return result;
 }
@@ -983,8 +996,8 @@ uint8_t DLL_PREFIX A_OF_COLOR(scrntype_t c)
 #endif
 
 #ifndef _MSC_VER
-struct to_upper {  // Refer from documentation of libstdc++, GCC5.
-	char operator() (char c) const { return std::toupper(c); }
+struct to_upper {
+	char operator() (char c) const { return (char)::toupper((unsigned char)c); }
 };
 #endif
 
@@ -992,19 +1005,14 @@ struct to_upper {  // Refer from documentation of libstdc++, GCC5.
 static void _my_mkdir(std::string t_dir)
 {
 	struct stat st;
-//#if !defined(__WIN32) && !defined(__WIN64)
-//	if(fstatat(AT_FDCWD, csppath.c_str(), &st, 0) != 0) {
-//		mkdirat(AT_FDCWD, t_dir.c_str(), 0700); // Not found
-//	}
 #if defined(_USE_QT)
 	if(stat(t_dir.c_str(), &st) != 0) {
 		QDir dir = QDir::current();
 		dir.mkdir(QString::fromStdString(t_dir));
-		//dir.mkpath(QString::fromUtf8(app_path));
 	}
 #else
 	if(stat(csppath.c_str(), &st) != 0) {
-		_mkdir(t_dir.c_str()); // Not found
+		_mkdir(t_dir.c_str());
 	}
 #endif
 }
@@ -1023,7 +1031,7 @@ const _TCHAR *DLL_PREFIX get_application_path()
 		} else {
 			my_tcscpy_s(app_path, _MAX_PATH, _T(".\\"));
 		}
-#else
+#elif defined(_USE_QT)
 #if defined(Q_OS_WIN)
 		std::string delim = "\\";
 #else
@@ -1035,6 +1043,30 @@ const _TCHAR *DLL_PREFIX get_application_path()
 		std::string cpath = csppath + my_procname + delim;
 		_my_mkdir(cpath);
 		strncpy(app_path, cpath.c_str(), _MAX_PATH - 1);
+#elif defined(__APPLE__)
+		uint32_t size = sizeof(app_path);
+		if(_NSGetExecutablePath(app_path, &size) == 0) {
+			char real_path[_MAX_PATH];
+			if(realpath(app_path, real_path) != NULL) {
+				char *last_slash = strrchr(real_path, '/');
+				if(last_slash != NULL) {
+					*(last_slash + 1) = '\0';
+					my_tcscpy_s(app_path, _MAX_PATH, real_path);
+				}
+			}
+		} else {
+			my_tcscpy_s(app_path, _MAX_PATH, "./");
+		}
+#else
+		if(getcwd(app_path, _MAX_PATH) != NULL) {
+			size_t len = strlen(app_path);
+			if(len > 0 && app_path[len - 1] != '/') {
+				app_path[len] = '/';
+				app_path[len + 1] = '\0';
+			}
+		} else {
+			my_tcscpy_s(app_path, _MAX_PATH, "./");
+		}
 #endif
 		initialized = true;
 	}
