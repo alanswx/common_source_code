@@ -39,6 +39,9 @@ static uint64_t get_time_ms()
 - (void)openUniversalMediaDialog;
 - (void)openFloppyDialog:(int)drv;
 - (void)openTapeDialog:(bool)play;
+#ifdef USE_QUICK_DISK
+- (void)openQuickDiskDialog:(int)drv;
+#endif
 - (void)openAnyFile:(NSString *)path;
 
 @end
@@ -109,6 +112,15 @@ static uint64_t get_time_ms()
 		[alert addButtonWithTitle:@"Continue Anyway"];
 		if([alert runModal] == NSAlertFirstButtonReturn) {
 			[[NSWorkspace sharedWorkspace] openURL:[NSURL fileURLWithPath:appSupportDir]];
+		}
+	}
+
+	// Check for command line file argument (e.g. mz1500 game.qdf)
+	NSArray *arguments = [[NSProcessInfo processInfo] arguments];
+	if(arguments.count > 1) {
+		NSString *firstArg = arguments[1];
+		if(![firstArg hasPrefix:@"-"] && [[NSFileManager defaultManager] fileExistsAtPath:firstArg]) {
+			[self openAnyFile:firstArg];
 		}
 	}
 
@@ -243,13 +255,16 @@ static uint64_t get_time_ms()
 	// File Menu
 	NSMenuItem *fileMenuItem = [[NSMenuItem alloc] init];
 	NSMenu *fileMenu = [[NSMenu alloc] initWithTitle:@"File"];
-	[self addMenuItemTo:fileMenu title:@"Open Media File (Tape / Disk)..." tag:9999 key:@"o"];
+	[self addMenuItemTo:fileMenu title:@"Open Media File (Tape / Disk / QD)..." tag:9999 key:@"o"];
 	[fileMenu addItem:[NSMenuItem separatorItem]];
 #ifdef USE_TAPE
 	[self addMenuItemTo:fileMenu title:@"Open Tape Image..." tag:ID_PLAY_TAPE1 key:@"t"];
 #endif
 #ifdef USE_FLOPPY_DISK
 	[self addMenuItemTo:fileMenu title:@"Open Floppy Disk Image..." tag:ID_OPEN_FD1 key:@"d"];
+#endif
+#ifdef USE_QUICK_DISK
+	[self addMenuItemTo:fileMenu title:@"Open Quick Disk Image..." tag:ID_OPEN_QD1 key:@"k"];
 #endif
 	[fileMenu addItem:[NSMenuItem separatorItem]];
 	[self addMenuItemTo:fileMenu title:@"Take Screenshot" tag:ID_HOST_CAPTURE_SCREEN key:@"s"];
@@ -314,6 +329,19 @@ static uint64_t get_time_ms()
 		[self addMenuItemTo:fdMenu title:@"Write Protected" tag:ID_WRITE_PROTECT_FD1 + d key:@""];
 		fdMenuItem.submenu = fdMenu;
 		[menubar addItem:fdMenuItem];
+	}
+#endif
+
+	// Quick Disk Drives (QD1 - QD2)
+#ifdef USE_QUICK_DISK
+	for(int d = 0; d < USE_QUICK_DISK; d++) {
+		NSMenuItem *qdMenuItem = [[NSMenuItem alloc] init];
+		NSString *qdTitle = (USE_QUICK_DISK == 1) ? @"Quick Disk" : [NSString stringWithFormat:@"QD%d", d + 1];
+		NSMenu *qdMenu = [[NSMenu alloc] initWithTitle:qdTitle];
+		[self addMenuItemTo:qdMenu title:@"Insert Quick Disk Image..." tag:(d == 0 ? ID_OPEN_QD1 : ID_OPEN_QD2) key:@""];
+		[self addMenuItemTo:qdMenu title:@"Eject Quick Disk" tag:(d == 0 ? ID_CLOSE_QD1 : ID_CLOSE_QD2) key:@""];
+		qdMenuItem.submenu = qdMenu;
+		[menubar addItem:qdMenuItem];
 	}
 #endif
 
@@ -404,6 +432,21 @@ static uint64_t get_time_ms()
 		g_emu->get_osd()->unlock_vm();
 	}
 #endif
+#ifdef USE_QUICK_DISK
+	else if(cmdId == ID_OPEN_QD1) {
+		[self openQuickDiskDialog:0];
+	} else if(cmdId == ID_OPEN_QD2) {
+		[self openQuickDiskDialog:1];
+	} else if(cmdId == ID_CLOSE_QD1) {
+		g_emu->get_osd()->lock_vm();
+		g_emu->close_quick_disk(0);
+		g_emu->get_osd()->unlock_vm();
+	} else if(cmdId == ID_CLOSE_QD2) {
+		g_emu->get_osd()->lock_vm();
+		g_emu->close_quick_disk(1);
+		g_emu->get_osd()->unlock_vm();
+	}
+#endif
 #ifdef USE_TAPE
 	else if(cmdId == ID_PLAY_TAPE1) {
 		[self openTapeDialog:true];
@@ -441,9 +484,11 @@ static uint64_t get_time_ms()
 	panel.allowsMultipleSelection = NO;
 	panel.allowsOtherFileTypes = YES;
 	panel.allowedFileTypes = @[
+		@"qdf", @"QDF", @"qd", @"QD", @"q20", @"Q20", @"m15", @"M15",
 		@"mzf", @"MZF", @"mzt", @"MZT", @"m12", @"M12", @"cas", @"CAS", @"cmt", @"CMT", @"wav", @"WAV", @"t88", @"T88",
 		@"d88", @"D88", @"d77", @"D77", @"tfd", @"TFD", @"2d", @"2D", @"dim", @"DIM", @"img", @"IMG", @"bin", @"BIN",
-		@"dsk", @"DSK", @"fd", @"FD", @"fdi", @"FDI", @"hdm", @"HDM", @"xdf", @"XDF", @"rom", @"ROM"
+		@"dsk", @"DSK", @"fd", @"FD", @"fdi", @"FDI", @"hdm", @"HDM", @"xdf", @"XDF", @"1dd", @"1DD",
+		@"rom", @"ROM"
 	];
 
 	if([panel runModal] == NSModalResponseOK) {
@@ -454,6 +499,30 @@ static uint64_t get_time_ms()
 	}
 }
 
+#ifdef USE_QUICK_DISK
+- (void)openQuickDiskDialog:(int)drv
+{
+	NSOpenPanel *panel = [NSOpenPanel openPanel];
+	panel.canChooseFiles = YES;
+	panel.canChooseDirectories = NO;
+	panel.allowsMultipleSelection = NO;
+	panel.allowsOtherFileTypes = YES;
+	panel.allowedFileTypes = @[
+		@"qdf", @"QDF", @"qd", @"QD", @"q20", @"Q20", @"m15", @"M15",
+		@"mzt", @"MZT", @"mzf", @"MZF", @"bin", @"BIN"
+	];
+
+	if([panel runModal] == NSModalResponseOK) {
+		NSURL *url = panel.URLs.firstObject;
+		if(url && g_emu) {
+			g_emu->get_osd()->lock_vm();
+			g_emu->open_quick_disk(drv, [url.path UTF8String]);
+			g_emu->get_osd()->unlock_vm();
+		}
+	}
+}
+#endif
+
 - (void)openFloppyDialog:(int)drv
 {
 	NSOpenPanel *panel = [NSOpenPanel openPanel];
@@ -463,7 +532,8 @@ static uint64_t get_time_ms()
 	panel.allowsOtherFileTypes = YES;
 	panel.allowedFileTypes = @[
 		@"d88", @"D88", @"d77", @"D77", @"tfd", @"TFD", @"2d", @"2D", @"dim", @"DIM", @"img", @"IMG",
-		@"bin", @"BIN", @"dsk", @"DSK", @"fd", @"FD", @"fdi", @"FDI", @"hdm", @"HDM", @"xdf", @"XDF",
+		@"bin", @"BIN", @"dsk", @"DSK", @"fd", @"FD", @"fdi", @"FDI", @"hdm", @"HDM", @"xdf", @"XDF", @"1dd", @"1DD",
+		@"qdf", @"QDF", @"qd", @"QD", @"q20", @"Q20", @"m15", @"M15",
 		@"mzf", @"MZF", @"mzt", @"MZT", @"cas", @"CAS"
 	];
 
@@ -471,10 +541,21 @@ static uint64_t get_time_ms()
 		NSURL *url = panel.URLs.firstObject;
 		if(url && g_emu) {
 			NSString *ext = [[url.path pathExtension] lowercaseString];
+#ifdef USE_QUICK_DISK
+			if([ext isEqualToString:@"qdf"] || [ext isEqualToString:@"qd"] || [ext isEqualToString:@"q20"] || [ext isEqualToString:@"m15"]) {
+				g_emu->get_osd()->lock_vm();
+				g_emu->open_quick_disk(0, [url.path UTF8String]);
+				g_emu->get_osd()->unlock_vm();
+			} else
+#endif
 			if([ext isEqualToString:@"mzf"] || [ext isEqualToString:@"mzt"] || [ext isEqualToString:@"cas"] || [ext isEqualToString:@"m12"] || [ext isEqualToString:@"cmt"]) {
 #ifdef USE_TAPE
 				g_emu->get_osd()->lock_vm();
 				g_emu->play_tape(0, [url.path UTF8String]);
+				g_emu->get_osd()->unlock_vm();
+#elif defined(USE_QUICK_DISK)
+				g_emu->get_osd()->lock_vm();
+				g_emu->open_quick_disk(0, [url.path UTF8String]);
 				g_emu->get_osd()->unlock_vm();
 #endif
 			} else {
@@ -495,6 +576,7 @@ static uint64_t get_time_ms()
 	panel.allowsOtherFileTypes = YES;
 	panel.allowedFileTypes = @[
 		@"mzf", @"MZF", @"mzt", @"MZT", @"m12", @"M12", @"wav", @"WAV", @"cas", @"CAS", @"t88", @"T88", @"cmt", @"CMT",
+		@"qdf", @"QDF", @"qd", @"QD", @"q20", @"Q20", @"m15", @"M15",
 		@"d88", @"D88", @"dsk", @"DSK"
 	];
 
@@ -502,6 +584,13 @@ static uint64_t get_time_ms()
 		NSURL *url = panel.URLs.firstObject;
 		if(url && g_emu) {
 			NSString *ext = [[url.path pathExtension] lowercaseString];
+#ifdef USE_QUICK_DISK
+			if([ext isEqualToString:@"qdf"] || [ext isEqualToString:@"qd"] || [ext isEqualToString:@"q20"] || [ext isEqualToString:@"m15"]) {
+				g_emu->get_osd()->lock_vm();
+				g_emu->open_quick_disk(0, [url.path UTF8String]);
+				g_emu->get_osd()->unlock_vm();
+			} else
+#endif
 			if([ext isEqualToString:@"d88"] || [ext isEqualToString:@"d77"] || [ext isEqualToString:@"dsk"] || [ext isEqualToString:@"2d"]) {
 #ifdef USE_FLOPPY_DISK
 				g_emu->get_osd()->lock_vm();
@@ -527,10 +616,15 @@ static uint64_t get_time_ms()
 	NSString *ext = [[path pathExtension] lowercaseString];
 
 	g_emu->get_osd()->lock_vm();
+#ifdef USE_QUICK_DISK
+	if([ext isEqualToString:@"m15"] || [ext isEqualToString:@"qdf"] || [ext isEqualToString:@"qd"] || [ext isEqualToString:@"q20"]) {
+		g_emu->open_quick_disk(0, [path UTF8String]);
+	} else
+#endif
 	if([ext isEqualToString:@"d88"] || [ext isEqualToString:@"d77"] || [ext isEqualToString:@"tfd"] || 
 	   [ext isEqualToString:@"2d"] || [ext isEqualToString:@"dim"] || [ext isEqualToString:@"img"] || 
 	   [ext isEqualToString:@"dsk"] || [ext isEqualToString:@"fd"] || [ext isEqualToString:@"fdi"] || 
-	   [ext isEqualToString:@"hdm"] || [ext isEqualToString:@"xdf"]) {
+	   [ext isEqualToString:@"hdm"] || [ext isEqualToString:@"xdf"] || [ext isEqualToString:@"1dd"]) {
 #ifdef USE_FLOPPY_DISK
 		g_emu->open_floppy_disk(0, [path UTF8String], 0);
 #endif
@@ -539,9 +633,7 @@ static uint64_t get_time_ms()
 	          [ext isEqualToString:@"t88"]) {
 #ifdef USE_TAPE
 		g_emu->play_tape(0, [path UTF8String]);
-#endif
-#ifdef USE_QUICK_DISK
-	} else if([ext isEqualToString:@"m15"] || [ext isEqualToString:@"qdf"] || [ext isEqualToString:@"qd"]) {
+#elif defined(USE_QUICK_DISK)
 		g_emu->open_quick_disk(0, [path UTF8String]);
 #endif
 	} else if([ext isEqualToString:@"rom"] || [ext isEqualToString:@"bin"]) {
@@ -550,6 +642,12 @@ static uint64_t get_time_ms()
 #endif
 	}
 	g_emu->get_osd()->unlock_vm();
+}
+
+- (BOOL)application:(NSApplication *)sender openFile:(NSString *)filename
+{
+	[self openAnyFile:filename];
+	return YES;
 }
 
 @end
