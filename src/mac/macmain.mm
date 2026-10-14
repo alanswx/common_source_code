@@ -180,7 +180,6 @@ static uint64_t get_time_ms()
 					}
 					int ratio = (total_frames > 0) ? (int)(100.0 * draw_frames / total_frames + 0.5) : 100;
 					int reported_fps = draw_frames;
-					fprintf(stderr, "[FPS UPDATE] %s: %d fps (%d%%)\n", g_emu->device_name(), reported_fps, ratio);
 					dispatch_async(dispatch_get_main_queue(), ^{
 						NSString *t = [NSString stringWithFormat:@"%s - %d fps (%d%%)", g_emu->device_name(), reported_fps, ratio];
 						[self.window setTitle:t];
