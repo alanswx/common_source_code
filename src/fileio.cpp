@@ -90,57 +90,109 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 	const char *found = strstr(file_path, marker);
 	if(found != NULL) {
 		const char *filename = found + strlen(marker);
-		char try_path[_MAX_PATH];
 		size_t prefix_len = found - file_path;
 
-		// 1. Try Contents/Resources/
-		if(prefix_len + strlen("/Contents/Resources/") + strlen(filename) < _MAX_PATH) {
-			strncpy(try_path, file_path, prefix_len);
-			try_path[prefix_len] = '\0';
-			strcat(try_path, "/Contents/Resources/");
-			strcat(try_path, filename);
-			FILE *f = _tfopen(try_path, fmode);
-			if(f != NULL) {
-				if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
-				return f;
+		// Extract app name (e.g. "mz700" from ".../mz700.app/Contents/MacOS/")
+		char app_name[64] = {0};
+		const char *app_ext = strstr(file_path, ".app");
+		if(app_ext != NULL && app_ext < found) {
+			const char *p = app_ext - 1;
+			while(p > file_path && *p != '/') p--;
+			if(*p == '/') p++;
+			size_t name_len = app_ext - p;
+			if(name_len > 0 && name_len < sizeof(app_name)) {
+				strncpy(app_name, p, name_len);
+				app_name[name_len] = '\0';
 			}
 		}
 
-		// 2. Try directory containing the .app bundle
-		char app_dir[_MAX_PATH];
+		// Candidate filenames (aliases)
+		const char *candidates[12] = { filename, NULL };
+		int cand_count = 1;
+		if(strcasecmp(filename, "IPL.ROM") == 0) {
+			candidates[cand_count++] = "IPL.rom";
+			candidates[cand_count++] = "IPLjp.ROM";
+			candidates[cand_count++] = "IPLeng.rom";
+			candidates[cand_count++] = "MZ700IPL.ROM";
+			candidates[cand_count++] = "1Z-013A.ROM";
+			candidates[cand_count++] = "1Z013A.ROM";
+			candidates[cand_count++] = "SP-5030.ROM";
+		} else if(strcasecmp(filename, "FONT.ROM") == 0) {
+			candidates[cand_count++] = "FONT.rom";
+			candidates[cand_count++] = "FONTjp.rom";
+			candidates[cand_count++] = "FONTjp.ROM";
+			candidates[cand_count++] = "FONTeng.ROM";
+			candidates[cand_count++] = "1Z-009A.ROM";
+			candidates[cand_count++] = "1Z009A.ROM";
+		} else if(strcasecmp(filename, "EXT.ROM") == 0) {
+			candidates[cand_count++] = "EXT.rom";
+			candidates[cand_count++] = "MZ800IPL.ROM";
+		}
+
+		const char *home = getenv("HOME");
+		char app_dir[_MAX_PATH] = {0};
 		if(prefix_len < _MAX_PATH) {
 			strncpy(app_dir, file_path, prefix_len);
 			app_dir[prefix_len] = '\0';
 			char *last_slash = strrchr(app_dir, '/');
 			if(last_slash != NULL) {
 				*(last_slash + 1) = '\0';
-				if(strlen(app_dir) + strlen(filename) < _MAX_PATH) {
-					my_stprintf_s(try_path, _MAX_PATH, _T("%s%s"), app_dir, filename);
-					FILE *f = _tfopen(try_path, fmode);
-					if(f != NULL) {
-						if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
-						return f;
-					}
+			}
+		}
+
+		for(int i = 0; i < cand_count; i++) {
+			const char *cand = candidates[i];
+			char try_path[_MAX_PATH];
+
+			// 1. Try Contents/Resources/<cand>
+			if(prefix_len + strlen("/Contents/Resources/") + strlen(cand) < _MAX_PATH) {
+				strncpy(try_path, file_path, prefix_len);
+				try_path[prefix_len] = '\0';
+				strcat(try_path, "/Contents/Resources/");
+				strcat(try_path, cand);
+				FILE *f = _tfopen(try_path, fmode);
+				if(f != NULL) {
+					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					return f;
 				}
 			}
-		}
 
-		// 3. Try ~/Library/Application Support/CommonSourceCodeProject/<filename>
-		const char *home = getenv("HOME");
-		if(home != NULL) {
-			my_stprintf_s(try_path, _MAX_PATH, _T("%s/Library/Application Support/CommonSourceCodeProject/%s"), home, filename);
-			FILE *f = _tfopen(try_path, fmode);
+			// 2. Try directory containing the .app bundle
+			if(app_dir[0] != '\0' && strlen(app_dir) + strlen(cand) < _MAX_PATH) {
+				my_stprintf_s(try_path, _MAX_PATH, _T("%s%s"), app_dir, cand);
+				FILE *f = _tfopen(try_path, fmode);
+				if(f != NULL) {
+					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					return f;
+				}
+			}
+
+			// 3. Try ~/Library/Application Support/CommonSourceCodeProject/<app_name>/<cand>
+			if(home != NULL && app_name[0] != '\0') {
+				my_stprintf_s(try_path, _MAX_PATH, _T("%s/Library/Application Support/CommonSourceCodeProject/%s/%s"), home, app_name, cand);
+				FILE *f = _tfopen(try_path, fmode);
+				if(f != NULL) {
+					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					return f;
+				}
+			}
+
+			// 4. Try ~/Library/Application Support/CommonSourceCodeProject/<cand>
+			if(home != NULL) {
+				my_stprintf_s(try_path, _MAX_PATH, _T("%s/Library/Application Support/CommonSourceCodeProject/%s"), home, cand);
+				FILE *f = _tfopen(try_path, fmode);
+				if(f != NULL) {
+					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					return f;
+				}
+			}
+
+			// 5. Try current working directory
+			FILE *f = _tfopen(cand, fmode);
 			if(f != NULL) {
-				if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+				if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, cand);
 				return f;
 			}
-		}
-
-		// 4. Try current working directory
-		FILE *f = _tfopen(filename, fmode);
-		if(f != NULL) {
-			if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, filename);
-			return f;
 		}
 	}
 	return NULL;

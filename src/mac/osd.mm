@@ -46,21 +46,41 @@ OSD::OSD()
 	mouse_enabled = false;
 #endif
 
-	vm_screen_width = 320;
-	vm_screen_height = 200;
-	vm_window_width = 320;
-	vm_window_height = 200;
-	vm_window_width_aspect = 320;
-	vm_window_height_aspect = 240;
-	host_window_width = 640;
-	host_window_height = 480;
+#ifndef SCREEN_WIDTH
+#define SCREEN_WIDTH 640
+#endif
+#ifndef SCREEN_HEIGHT
+#define SCREEN_HEIGHT 400
+#endif
+#ifndef WINDOW_WIDTH
+#define WINDOW_WIDTH SCREEN_WIDTH
+#endif
+#ifndef WINDOW_HEIGHT
+#define WINDOW_HEIGHT SCREEN_HEIGHT
+#endif
+#ifndef WINDOW_WIDTH_ASPECT
+#define WINDOW_WIDTH_ASPECT WINDOW_WIDTH
+#endif
+#ifndef WINDOW_HEIGHT_ASPECT
+#define WINDOW_HEIGHT_ASPECT ((WINDOW_HEIGHT * 6) / 5)
+#endif
+
+	vm_screen_width = SCREEN_WIDTH;
+	vm_screen_height = SCREEN_HEIGHT;
+	vm_window_width = WINDOW_WIDTH;
+	vm_window_height = WINDOW_HEIGHT;
+	vm_window_width_aspect = WINDOW_WIDTH_ASPECT;
+	vm_window_height_aspect = WINDOW_HEIGHT_ASPECT;
+	host_window_width = WINDOW_WIDTH;
+	host_window_height = WINDOW_HEIGHT;
 	host_window_mode = true;
-	draw_screen_width = 640;
-	draw_screen_height = 480;
+	draw_screen_width = WINDOW_WIDTH;
+	draw_screen_height = WINDOW_HEIGHT;
 
 	vm_screen_buffer.width = 0;
 	vm_screen_buffer.height = 0;
 	vm_screen_buffer.lpBmp = nullptr;
+	allocate_screen_buffer(&vm_screen_buffer, vm_screen_width, vm_screen_height);
 }
 
 OSD::~OSD()

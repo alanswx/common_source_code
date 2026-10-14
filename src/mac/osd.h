@@ -158,7 +158,7 @@ class OSD
 {
 private:
 	int lock_count;
-	std::mutex vm_mutex;
+	std::recursive_mutex vm_mutex;
 
 	// Input
 	uint8_t key_status[256];
