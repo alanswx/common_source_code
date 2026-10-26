@@ -3,3 +3,6 @@ build/
 *.swp
 *.bak
 *.dSYM
+commonmac/
+commonmac.zip
+*.app/
