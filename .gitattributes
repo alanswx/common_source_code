@@ -1,0 +1,17 @@
+# Store text with LF line endings; upstream archives ship CRLF.
+* text=auto
+
+# Windows project files keep CRLF in the working tree.
+*.sln      text eol=crlf
+*.vcproj   text eol=crlf
+*.vcxproj  text eol=crlf
+*.filters  text eol=crlf
+*.bat      text eol=crlf
+
+*.png  binary
+*.ico  binary
+*.icns binary
+*.bmp  binary
+*.lib  binary
+*.dll  binary
+*.exe  binary
