@@ -82,9 +82,12 @@ FILEIO::~FILEIO(void)
 }
 
 #if defined(__APPLE__)
+#include "mac/mac_logger.h"
 static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _TCHAR* resolved_path)
 {
 	if(!file_path || file_path[0] == '\0') return NULL;
+	// Headless X1 uses explicit files only; never search user/global ROM aliases.
+	if(getenv("RETROPC_CLI_DATA_DIR")) return NULL;
 
 	const char *marker = "/Contents/MacOS/";
 	const char *found = strstr(file_path, marker);
@@ -107,7 +110,7 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 		}
 
 		// Candidate filenames (aliases)
-		const char *candidates[12] = { filename, NULL };
+		const char *candidates[16] = { filename, NULL };
 		int cand_count = 1;
 		if(strcasecmp(filename, "IPL.ROM") == 0) {
 			candidates[cand_count++] = "IPL.rom";
@@ -117,6 +120,50 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 			candidates[cand_count++] = "1Z-013A.ROM";
 			candidates[cand_count++] = "1Z013A.ROM";
 			candidates[cand_count++] = "SP-5030.ROM";
+			candidates[cand_count++] = "ipl.x1";
+			candidates[cand_count++] = "IPLROM.X1";
+			candidates[cand_count++] = "IPLROM.X1T";
+		} else if(strcasecmp(filename, "IPLROM.X1") == 0) {
+			candidates[cand_count++] = "ipl.x1";
+			candidates[cand_count++] = "IPL.ROM";
+			candidates[cand_count++] = "IPL.rom";
+			candidates[cand_count++] = "ipl.rom";
+		} else if(strcasecmp(filename, "IPLROM.X1T") == 0) {
+			candidates[cand_count++] = "ipl.x1t";
+			candidates[cand_count++] = "212895703175-ipl.x1t";
+			candidates[cand_count++] = "IPL.ROM";
+			candidates[cand_count++] = "IPL.rom";
+			candidates[cand_count++] = "ipl.rom";
+		} else if(strcasecmp(filename, "ANK8.ROM") == 0 || strcasecmp(filename, "FNT0808.X1") == 0) {
+			candidates[cand_count++] = "FNT0808.X1";
+			candidates[cand_count++] = "fnt0808.x1";
+			candidates[cand_count++] = "ank.fnt";
+			candidates[cand_count++] = "ANK8.ROM";
+			candidates[cand_count++] = "ank8.rom";
+		} else if(strcasecmp(filename, "ANK16.ROM") == 0 || strcasecmp(filename, "FNT0816.X1") == 0) {
+			candidates[cand_count++] = "FNT0816.X1";
+			candidates[cand_count++] = "fnt0816.x1";
+			candidates[cand_count++] = "e356dd199270-FNT0816.X1";
+			candidates[cand_count++] = "ANK16.ROM";
+			candidates[cand_count++] = "ank16.rom";
+		} else if(strcasecmp(filename, "KANJI.ROM") == 0 || strcasecmp(filename, "FNT1616.X1") == 0) {
+			candidates[cand_count++] = "KANJI.ROM";
+			candidates[cand_count++] = "kanji.rom";
+			candidates[cand_count++] = "FNT1616.X1";
+			candidates[cand_count++] = "fnt1616.x1";
+			candidates[cand_count++] = "kanji-physical.bin";
+		} else if(strcasecmp(filename, "KANJI2.ROM") == 0) {
+			candidates[cand_count++] = "KANJI2.ROM";
+			candidates[cand_count++] = "kanji2.rom";
+		} else if(strcasecmp(filename, "DICT.ROM") == 0) {
+			candidates[cand_count++] = "DICT.ROM";
+			candidates[cand_count++] = "dict.rom";
+		} else if(strcasecmp(filename, "PHONE.ROM") == 0) {
+			candidates[cand_count++] = "PHONE.ROM";
+			candidates[cand_count++] = "phone.rom";
+		} else if(strcasecmp(filename, "CG.ROM") == 0) {
+			candidates[cand_count++] = "CG.ROM";
+			candidates[cand_count++] = "cg.rom";
 		} else if(strcasecmp(filename, "FONT.ROM") == 0) {
 			candidates[cand_count++] = "FONT.rom";
 			candidates[cand_count++] = "FONTjp.rom";
@@ -153,6 +200,7 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 				FILE *f = _tfopen(try_path, fmode);
 				if(f != NULL) {
 					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					mac_record_found_rom(filename, try_path);
 					return f;
 				}
 			}
@@ -163,6 +211,7 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 				FILE *f = _tfopen(try_path, fmode);
 				if(f != NULL) {
 					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					mac_record_found_rom(filename, try_path);
 					return f;
 				}
 			}
@@ -173,6 +222,7 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 				FILE *f = _tfopen(try_path, fmode);
 				if(f != NULL) {
 					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					mac_record_found_rom(filename, try_path);
 					return f;
 				}
 			}
@@ -183,6 +233,7 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 				FILE *f = _tfopen(try_path, fmode);
 				if(f != NULL) {
 					if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, try_path);
+					mac_record_found_rom(filename, try_path);
 					return f;
 				}
 			}
@@ -191,8 +242,18 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 			FILE *f = _tfopen(cand, fmode);
 			if(f != NULL) {
 				if(resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, cand);
+				mac_record_found_rom(filename, cand);
 				return f;
 			}
+		}
+
+		const char *dot = strrchr(filename, '.');
+		if(dot && (strcasecmp(dot, ".rom") == 0 || strcasecmp(dot, ".bin") == 0 ||
+		           strcasecmp(dot, ".fnt") == 0 || strcasecmp(dot, ".x1") == 0 ||
+		           strcasecmp(dot, ".x1t") == 0 || strcasecmp(dot, ".dat") == 0 ||
+		           strcasecmp(dot, ".60") == 0)) {
+			mac_log("[ROM MISSING] Could not find '%s' for %s", filename, app_name);
+			mac_record_missing_rom(filename, app_name);
 		}
 	}
 	return NULL;
