@@ -2302,7 +2302,7 @@ void Z80::run_one_opecode()
 	prev_after_ei = after_ei;
 	after_halt = after_di = after_ei = false;
 	after_ldair = false;
-	if(z80_trace_hook) z80_trace_hook(PC, SP, AF, BC, DE, HL);	// scripted mode (mac/macmain.mm --trace-cpu)
+	if(z80_trace_hook) z80_trace_hook(PC, SP, AF, BC, DE, HL);	// headless and scripted modes (cli/headless.cpp, mac/macmain.mm --trace-cpu)
 	
 #ifdef USE_DEBUGGER
 	bool now_debugging = d_debugger->now_debugging;

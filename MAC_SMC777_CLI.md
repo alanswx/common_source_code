@@ -1,6 +1,6 @@
 # macOS SMC-777 headless CLI
 
-The `smc777` (and `smc70`) app executable accepts `--headless` (src/mac/smc777_cli.mm). Like the X1 CLI it runs the
+The `smc777` (and `smc70`) app executable accepts `--headless` (the shared front end, src/cli/headless.cpp; see CLI.md). Like the X1 CLI it runs the
 existing VM synchronously with no NSApplication, Metal window or host audio, and with no saved config or global ROM
 fallback. It exists to compare the SMC777_MiSTer core and its Verilator simulation against eSMC-777.
 
@@ -27,7 +27,7 @@ cmake --build /tmp/csp-build --target smc777 -j 8
 - `--trace-from/--trace-to FRAME`, `--dump-memory FILE` (final 64 KiB CPU view).
 - `--joy FRAME:PORT:BITS`: joystick 0/1 state from FRAME (the VM's bits: 1 up, 2 down, 4 left, 8 right, 16/32
   triggers), written to the OSD joystick buffer.
-- `--wav FILE`: the mixed sound output (16-bit stereo at the VM's rate), from the `mac_cli_sound_hook` in
+- `--wav FILE`: the mixed sound output (16-bit stereo at the VM's rate), from the `cli_sound_hook` in
   `OSD::update_sound` (null for the GUI).
 
 Frames are 0..N inclusive; scheduled actions precede a frame, captures follow it. `OUT/frames.csv` records

@@ -25,6 +25,7 @@ set(RETROPC_COMMON_SOURCES
     src/fifo.cpp
     src/debugger.cpp
     src/emu.cpp
+    src/cli/headless.cpp
 )
 
 set(RETROPC_MAC_SOURCES
@@ -33,9 +34,6 @@ set(RETROPC_MAC_SOURCES
     src/mac/MetalView.mm
     src/mac/mac_logger.mm
     src/mac/macmain.mm
-    src/mac/x1_cli.mm
-    src/mac/smc777_cli.mm
-    src/mac/bmjr_cli.mm
 )
 
 find_library(COCOA_FRAMEWORK Cocoa REQUIRED)

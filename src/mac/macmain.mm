@@ -15,6 +15,7 @@
 
 #include "osd.h"
 #include "mac_logger.h"
+#include "../cli/headless.h"
 #include "../emu.h"
 #include "../config.h"
 #include "../res/resource.h"
@@ -50,8 +51,8 @@ static std::set<int> g_script_shots;
 static std::vector<std::pair<int, std::string>> g_script_types;
 static FILE *g_trace_file = nullptr;
 static int g_trace_from = 0, g_trace_to = 0, g_script_frame_now = 0;
-// weak: z80.cpp supplies the real one; targets without a Z80 (e.g. bmjr) link against this unused pointer
-__attribute__((weak)) void (*z80_trace_hook)(uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl) = nullptr;
+// z80.cpp supplies it; cli/headless.cpp has a weak definition for targets without a Z80
+extern void (*z80_trace_hook)(uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl);
 static void script_trace(uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl)
 {
 	if(g_trace_file && g_script_frame_now >= g_trace_from && g_script_frame_now <= g_trace_to)
@@ -129,7 +130,11 @@ static bool script_frame(int frame)
 	}
 	auto tp = g_script_tapes.equal_range(frame);
 	for(auto it = tp.first; it != tp.second; ++it) {
+#ifdef USE_TAPE
 		g_emu->play_tape(0, it->second.c_str());
+#else
+		fprintf(stderr, "[script] tape is unsupported by this machine\n");exit(2);
+#endif
 		fprintf(stderr, "[script] frame %d: tape %s\n", frame, it->second.c_str());
 	}
 	auto ks = g_script_keys.equal_range(frame);
@@ -1029,29 +1034,16 @@ static uint64_t get_time_ms()
 
 @end
 
-#if defined(_X1) || defined(_X1TURBO) || defined(_X1TURBOZ)
-int mac_x1_cli(int argc, const char **argv);
-#endif
-#if defined(_SMC777) || defined(_SMC70)
-int mac_smc777_cli(int argc, const char **argv);
-#endif
-#if defined(_BMJR)
-int mac_bmjr_cli(int argc, const char **argv);
-#endif
 int main(int argc, const char * argv[])
 {
-#if defined(_X1) || defined(_X1TURBO) || defined(_X1TURBOZ)
-    for(int i=1;i<argc;i++)
-        if(!strcmp(argv[i], "--headless") || !strcmp(argv[i], "--help")) return mac_x1_cli(argc,argv);
-#endif
-#if defined(_SMC777) || defined(_SMC70)
-    for(int i=1;i<argc;i++)
-        if(!strcmp(argv[i], "--headless") || !strcmp(argv[i], "--help")) return mac_smc777_cli(argc,argv);
-#endif
-#if defined(_BMJR)
-    for(int i=1;i<argc;i++)
-        if(!strcmp(argv[i], "--headless") || !strcmp(argv[i], "--help")) return mac_bmjr_cli(argc,argv);
-#endif
+	// --headless (or --help): the shared command line front end, no window or host audio
+	for(int i = 1; i < argc; i++) {
+		if(!strcmp(argv[i], "--headless") || !strcmp(argv[i], "--help")) {
+			@autoreleasepool {
+				return retropc_headless(argc, argv);
+			}
+		}
+	}
 	@autoreleasepool {
 		NSApplication *app = [NSApplication sharedApplication];
 		[app setActivationPolicy:NSApplicationActivationPolicyRegular];

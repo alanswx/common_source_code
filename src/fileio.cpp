@@ -81,12 +81,15 @@ FILEIO::~FILEIO(void)
 	Fclose();
 }
 
+// headless front end (cli/headless.cpp): told about every file that cannot be opened for reading
+void (*fileio_read_miss_hook)(const _TCHAR *path) = NULL;
+
 #if defined(__APPLE__)
 #include "mac/mac_logger.h"
 static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _TCHAR* resolved_path)
 {
 	if(!file_path || file_path[0] == '\0') return NULL;
-	// Headless X1 uses explicit files only; never search user/global ROM aliases.
+	// The headless CLI uses its explicit ROM directory only; never search user/global ROM aliases.
 	if(getenv("RETROPC_CLI_DATA_DIR")) return NULL;
 
 	const char *marker = "/Contents/MacOS/";
@@ -350,6 +353,7 @@ bool FILEIO::Fopen(const _TCHAR *file_path, int mode)
 #if defined(__APPLE__)
 		if((fp = mac_fallback_fopen(file_path, _T("rb"), path)) != NULL) return true;
 #endif
+		if(fileio_read_miss_hook) fileio_read_miss_hook(file_path);
 		return false;
 	case FILEIO_WRITE_BINARY:
 		return ((fp = _tfopen(file_path, _T("wb"))) != NULL);

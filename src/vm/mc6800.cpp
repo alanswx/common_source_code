@@ -797,7 +797,7 @@ void MC6800::run_one_opecode()
 	} else {
 		do {
 			one_more_insn = false;
-			if(mc6800_trace_hook) mc6800_trace_hook(PC, A, B, X, S, CC);	// headless mode (mac/bmjr_cli.mm --trace-cpu)
+			if(mc6800_trace_hook) mc6800_trace_hook(PC, A, B, X, S, CC);	// headless mode (cli/headless.cpp --trace-cpu)
 #ifdef USE_DEBUGGER
 			bool now_debugging = d_debugger->now_debugging;
 			if(now_debugging) {

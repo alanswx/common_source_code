@@ -8,6 +8,7 @@
 */
 
 #include "osd.h"
+#include "../cli/headless.h"
 #include <chrono>
 #include <thread>
 #include <iostream>
@@ -290,8 +291,6 @@ void OSD::write_bitmap_to_file(bitmap_t *bitmap, const _TCHAR *file_path)
 // Sound
 // ----------------------------------------------------------------------------
 
-// Headless CLIs (smc777_cli.mm --wav): receives each mixed stereo buffer (sound_samples frames at sound_rate)
-void (*mac_cli_sound_hook)(const uint16_t *buffer, int samples, int rate) = nullptr;
 
 void OSD::update_sound(int* extra_frames)
 {
@@ -299,7 +298,7 @@ void OSD::update_sound(int* extra_frames)
 	if(sound_available && vm) {
 		if(vm->get_sound_buffer_ptr() >= sound_samples) {
 			uint16_t* buffer = vm->create_sound(extra_frames);
-			if(buffer && mac_cli_sound_hook) mac_cli_sound_hook(buffer, sound_samples, sound_rate);
+			if(buffer && cli_sound_hook) cli_sound_hook(buffer, sound_samples, sound_rate);	// headless --wav
 			if(buffer && !sound_muted && !getenv("RETROPC_CLI_DATA_DIR")) {
 				mac_sound_write(buffer, sound_samples);
 			}
@@ -324,6 +323,16 @@ void OSD::stop_sound()
 
 void OSD::update_input()
 {
+	// keys pressed for KEY_KEEP_FRAMES (auto key's caps/kana/kanji toggles) count down, as on Windows
+	for(int i = 0; i < 256; i++) {
+		if(key_status[i] & 0x7f) {
+			key_status[i] = (key_status[i] & 0x80) | ((key_status[i] & 0x7f) - 1);
+			if(!key_status[i] && vm) {
+				vm->key_up(i);
+			}
+		}
+	}
+	key_status[0] = 0;
 }
 
 void OSD::key_down(int code, bool extended, bool repeat)
@@ -336,19 +345,69 @@ void OSD::key_up(int code, bool extended)
 	key_up_native(code);
 }
 
+// Left/right modifiers also press the generic VK_SHIFT/VK_CONTROL/VK_MENU, and auto key's lock
+// codes $F0-$F4 become CAPS/KANA/KANJI held for KEY_KEEP_FRAMES, as in win32/osd_input.cpp.
+// The host keyboard (MetalView.mm) and the headless CLI send generic modifiers directly.
+static int generic_modifier(int code)
+{
+	switch(code) {
+	case VK_LSHIFT: case VK_RSHIFT: return VK_SHIFT;
+	case VK_LCONTROL: case VK_RCONTROL: return VK_CONTROL;
+	case VK_LMENU: case VK_RMENU: return VK_MENU;
+	}
+	return 0;
+}
+
 void OSD::key_down_native(int code, bool repeat)
 {
-	if(code >= 0 && code < 256) {
-		key_status[code] = 0x80;
-		if(vm) vm->key_down(code, repeat);
+	bool keep_frames = false;
+
+	if(code == 0xf0) {
+		code = VK_CAPITAL;
+		keep_frames = true;
+	} else if(code == 0xf1 || code == 0xf2) {
+		code = VK_KANA;
+		keep_frames = true;
+	} else if(code == 0xf3 || code == 0xf4) {
+		code = VK_KANJI;
+		keep_frames = true;
 	}
+	if(code < 0 || code >= 256) {
+		return;
+	}
+	if(key_status[code] == 0 || keep_frames) {
+		repeat = false;
+	}
+#ifndef KEY_KEEP_FRAMES
+#define KEY_KEEP_FRAMES 3
+#endif
+	key_status[code] = keep_frames ? KEY_KEEP_FRAMES : 0x80;
+	int generic = generic_modifier(code);
+	if(generic && !key_status[generic]) {
+		key_status[generic] = 0x80;
+		if(vm) vm->key_down(generic, repeat);
+	}
+	if(vm) vm->key_down(code, repeat);
 }
 
 void OSD::key_up_native(int code)
 {
-	if(code >= 0 && code < 256) {
-		key_status[code] = 0x00;
-		if(vm) vm->key_up(code);
+	if(code < 0 || code >= 256 || key_status[code] == 0) {
+		return;
+	}
+	if((key_status[code] &= 0x7f) != 0) {
+		return;	// still held for its keep frames
+	}
+	if(vm) vm->key_up(code);
+	int generic = generic_modifier(code);
+	if(generic) {
+		bool other = (generic == VK_SHIFT) ? (key_status[VK_LSHIFT] | key_status[VK_RSHIFT]) :
+		             (generic == VK_CONTROL) ? (key_status[VK_LCONTROL] | key_status[VK_RCONTROL]) :
+		             (key_status[VK_LMENU] | key_status[VK_RMENU]);
+		if(!other && key_status[generic]) {
+			key_status[generic] = 0;
+			if(vm) vm->key_up(generic);
+		}
 	}
 }
 

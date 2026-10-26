@@ -31,24 +31,24 @@ looks for them in `~/Library/Application Support/CommonSourceCodeProject/<machin
 
 ## Command-line modes
 
-| Machines | Option | Notes |
-| --- | --- | --- |
-| x1, x1turbo, x1turboz | `--headless` | [MAC_X1_CLI.md](MAC_X1_CLI.md) |
-| smc777, smc70 | `--headless` | [MAC_SMC777_CLI.md](MAC_SMC777_CLI.md) |
-| bmjr | `--headless` | [MAC_BMJR_CLI.md](MAC_BMJR_CLI.md) |
-| Sharp MZ family | `--script` | Comment header in `src/mac/macmain.mm` |
-
-Run headless with an explicit ROM directory and a new output directory. Typing,
+Every machine accepts `--headless`: it runs without a window or audio, with
+an explicit ROM directory and a new output directory. Typing, pasted listings,
 key presses, resets and disk or tape changes are scheduled by frame number.
-Outputs are PNG screenshots, per-frame hashes, CPU and I/O traces, memory dumps
-and a one-line JSON result.
+Outputs are PNG screenshots, per-frame hashes, traces, memory dumps, saved disk
+and tape images, and a one-line JSON result. See [CLI.md](CLI.md).
+
+| Machines | Extra notes |
+| --- | --- |
+| x1, x1turbo, x1turboz | [MAC_X1_CLI.md](MAC_X1_CLI.md) |
+| smc777, smc70 | [MAC_SMC777_CLI.md](MAC_SMC777_CLI.md) |
+| bmjr | [MAC_BMJR_CLI.md](MAC_BMJR_CLI.md) |
+| Sharp MZ family | The GUI's `--script` mode: comment header in `src/mac/macmain.mm` |
 
 ## Roadmap
 
-1. One shared headless CLI for every machine, built on CSCP's auto-key (paste)
-   support, for automated testing of type-in BASIC listings. It will load a
-   listing from a text file or tape, check what BASIC accepted, and save the
-   program as a tape or floppy image.
+1. Automated testing of type-in BASIC listings on the shared CLI: wait for the
+   BASIC prompt, read the screen back as text, find the lines BASIC rejected,
+   and save the program as a tape or floppy image.
 2. A Linux build: a portable OSD core plus an SDL2 front-end, with the headless
    CLI first.
 3. CI on macOS and Linux.

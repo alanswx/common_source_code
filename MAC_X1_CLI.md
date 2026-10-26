@@ -1,9 +1,11 @@
 # macOS X1 comparison CLI
 
-The X1, X1turbo and X1turboZ app executables accept `--headless`. This path
+The X1, X1turbo and X1turboZ app executables accept `--headless` (the shared
+front end, src/cli/headless.cpp; see CLI.md). This path
 runs the existing emulator VM synchronously without creating NSApplication,
 a Metal window or host audio. The existing GUI and Sharp MZ `--script` mode
-remain separate. X1twin is link-checked but does not expose this CLI route.
+remain separate. X1twin now also accepts `--headless` with the X1 rules below,
+but has not been qualified.
 
 Build only the desired targets in a separate directory:
 

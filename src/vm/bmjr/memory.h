@@ -95,7 +95,7 @@ public:
 	void draw_screen();
 	uint8_t* get_ram()
 	{
-		return ram;	// headless mode (mac/bmjr_cli.mm --dump-mem, --poke)
+		return ram;	// headless mode (cli/headless.cpp --dump-mem, --poke)
 	}
 	bool is_io(uint32_t addr)
 	{

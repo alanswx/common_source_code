@@ -1,6 +1,6 @@
 # macOS Basic Master Jr. headless CLI
 
-The `bmjr` app executable accepts `--headless` (src/mac/bmjr_cli.mm). Like the X1 and SMC-777 CLIs it runs the
+The `bmjr` app executable accepts `--headless` (the shared front end, src/cli/headless.cpp; see CLI.md). Like the X1 and SMC-777 CLIs it runs the
 existing VM synchronously with no NSApplication, Metal window or host audio, and with no saved config or global ROM
 fallback. It exists to compare the BasicMasterJr_MiSTer core and its Verilator simulation against eBASICMasterJr.
 

@@ -10,7 +10,7 @@
 #include "memory.h"
 #include "../datarec.h"
 
-void (*bmjr_cli_io_hook)(bool, uint16_t, uint8_t) = nullptr;	// headless mode (mac/bmjr_cli.mm --trace-io)
+void (*bmjr_cli_io_hook)(bool, uint16_t, uint8_t) = nullptr;	// headless mode (cli/headless.cpp --trace-io)
 
 #define SET_BANK(s, e, w, r) { \
 	int sb = (s) >> 11, eb = (e) >> 11; \

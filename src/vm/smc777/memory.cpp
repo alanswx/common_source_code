@@ -22,9 +22,7 @@
 #define IRQ_BIT_VSYNC	1
 #define IRQ_BIT_KEYIN	2
 
-#ifdef __APPLE__
-extern void (*smc777_cli_io_hook)(bool, uint16_t, uint8_t);	// src/mac/smc777_cli.mm
-#endif
+void (*smc777_cli_io_hook)(bool, uint16_t, uint8_t) = nullptr;	// headless mode (cli/headless.cpp --trace-io)
 
 #define SET_BANK(s, e, w, r) { \
 	int sb = (s) >> 14, eb = (e) >> 14; \
@@ -175,9 +173,7 @@ uint32_t MEMORY::fetch_op(uint32_t addr, int *wait)
 
 void MEMORY::write_io8(uint32_t addr, uint32_t data)
 {
-#ifdef __APPLE__
 	if(smc777_cli_io_hook) smc777_cli_io_hook(true, uint16_t(addr), uint8_t(data));
-#endif
 #ifdef _IO_DEBUG_LOG
 	this->out_debug_log(_T("%04x\tOUT8\t%04x,%02x\n"), d_cpu->get_pc(), addr, data);
 #endif
@@ -410,9 +406,7 @@ void MEMORY::write_io8(uint32_t addr, uint32_t data)
 uint32_t MEMORY::read_io8(uint32_t addr)
 {
 	uint32_t val = read_io8_debug(addr);
-#ifdef __APPLE__
 	if(smc777_cli_io_hook) smc777_cli_io_hook(false, uint16_t(addr), uint8_t(val));
-#endif
 #ifdef _IO_DEBUG_LOG
 	this->out_debug_log(_T("%04x\tIN8\t%04x = %02x\n"), d_cpu->get_pc(), addr, val);
 #endif
