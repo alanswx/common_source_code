@@ -232,9 +232,7 @@ public:
 	uint32_t fetch_op(uint32_t addr, int *wait);
 	void write_io8(uint32_t addr, uint32_t data);
 	uint32_t read_io8(uint32_t addr);
-#ifdef _IO_DEBUG_LOG
 	uint32_t read_io8_debug(uint32_t addr);
-#endif
 	void write_signal(int id, uint32_t data, uint32_t mask);
 	void event_callback(int event_id, int err);
 	void event_frame();

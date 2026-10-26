@@ -35,7 +35,9 @@ OSD::OSD()
 	sound_muted = false;
 	now_record_sound = false;
 	now_record_video = false;
+#ifdef USE_AUTO_KEY
 	now_auto_key = false;
+#endif
 	lost_focus = false;
 
 	memset(key_status, 0, sizeof(key_status));
@@ -95,7 +97,7 @@ void OSD::initialize(int rate, int samples)
 	sound_samples = samples;
 
 	allocate_screen_buffer(&vm_screen_buffer, vm_screen_width, vm_screen_height);
-	mac_sound_init(sound_rate, sound_samples);
+	if(!getenv("RETROPC_CLI_DATA_DIR")) mac_sound_init(sound_rate, sound_samples);
 	sound_available = true;
 	sound_started = true;
 }
@@ -288,13 +290,17 @@ void OSD::write_bitmap_to_file(bitmap_t *bitmap, const _TCHAR *file_path)
 // Sound
 // ----------------------------------------------------------------------------
 
+// Headless CLIs (smc777_cli.mm --wav): receives each mixed stereo buffer (sound_samples frames at sound_rate)
+void (*mac_cli_sound_hook)(const uint16_t *buffer, int samples, int rate) = nullptr;
+
 void OSD::update_sound(int* extra_frames)
 {
 	*extra_frames = 0;
 	if(sound_available && vm) {
 		if(vm->get_sound_buffer_ptr() >= sound_samples) {
 			uint16_t* buffer = vm->create_sound(extra_frames);
-			if(buffer && !sound_muted) {
+			if(buffer && mac_cli_sound_hook) mac_cli_sound_hook(buffer, sound_samples, sound_rate);
+			if(buffer && !sound_muted && !getenv("RETROPC_CLI_DATA_DIR")) {
 				mac_sound_write(buffer, sound_samples);
 			}
 		}
@@ -334,6 +340,7 @@ void OSD::key_down_native(int code, bool repeat)
 {
 	if(code >= 0 && code < 256) {
 		key_status[code] = 0x80;
+		if(vm) vm->key_down(code, repeat);
 	}
 }
 
@@ -341,6 +348,7 @@ void OSD::key_up_native(int code)
 {
 	if(code >= 0 && code < 256) {
 		key_status[code] = 0x00;
+		if(vm) vm->key_up(code);
 	}
 }
 

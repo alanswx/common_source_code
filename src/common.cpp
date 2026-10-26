@@ -1044,6 +1044,11 @@ const _TCHAR *DLL_PREFIX get_application_path()
 		_my_mkdir(cpath);
 		strncpy(app_path, cpath.c_str(), _MAX_PATH - 1);
 #elif defined(__APPLE__)
+        const char *cli_dir=getenv("RETROPC_CLI_DATA_DIR");
+        if(cli_dir && *cli_dir) {
+            my_tcscpy_s(app_path,_MAX_PATH,cli_dir);
+            size_t n=strlen(app_path);if(n && app_path[n-1]!='/') { app_path[n]='/';app_path[n+1]=0; }
+        } else {
 		uint32_t size = sizeof(app_path);
 		if(_NSGetExecutablePath(app_path, &size) == 0) {
 			char real_path[_MAX_PATH];
@@ -1057,6 +1062,7 @@ const _TCHAR *DLL_PREFIX get_application_path()
 		} else {
 			my_tcscpy_s(app_path, _MAX_PATH, "./");
 		}
+        }
 #else
 		if(getcwd(app_path, _MAX_PATH) != NULL) {
 			size_t len = strlen(app_path);

@@ -16,6 +16,9 @@
 #include "io_wait_hireso.h"
 #endif
 #include "display.h"
+#ifdef OSD_MAC
+extern void (*x1_cli_io_hook)(bool,uint16_t,uint8_t,int);
+#endif
 #ifdef USE_DEBUGGER
 #include "../debugger.h"
 #endif
@@ -66,11 +69,18 @@ void IOBUS::write_signal(int id, uint32_t data, uint32_t mask)
 void IOBUS::write_io8w(uint32_t addr, uint32_t data, int* wait)
 {
 	write_port8(addr, data, false, wait);
+#ifdef OSD_MAC
+    if(x1_cli_io_hook) x1_cli_io_hook(true,uint16_t(addr),uint8_t(data),*wait);
+#endif
 }
 
 uint32_t IOBUS::read_io8w(uint32_t addr, int* wait)
 {
-	return read_port8(addr, false, wait);
+    uint32_t value=read_port8(addr, false, wait);
+#ifdef OSD_MAC
+    if(x1_cli_io_hook) x1_cli_io_hook(false,uint16_t(addr),uint8_t(value),*wait);
+#endif
+    return value;
 }
 
 void IOBUS::write_dma_io8w(uint32_t addr, uint32_t data, int* wait)

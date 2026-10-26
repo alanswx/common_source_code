@@ -2264,6 +2264,8 @@ int Z80::run(int clock)
 	}
 }
 
+void (*z80_trace_hook)(uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl) = nullptr;
+
 void Z80::run_one_opecode()
 {
 	if(!after_ei) {
@@ -2300,6 +2302,7 @@ void Z80::run_one_opecode()
 	prev_after_ei = after_ei;
 	after_halt = after_di = after_ei = false;
 	after_ldair = false;
+	if(z80_trace_hook) z80_trace_hook(PC, SP, AF, BC, DE, HL);	// scripted mode (mac/macmain.mm --trace-cpu)
 	
 #ifdef USE_DEBUGGER
 	bool now_debugging = d_debugger->now_debugging;

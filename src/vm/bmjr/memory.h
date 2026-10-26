@@ -40,6 +40,7 @@ private:
 	
 	uint8_t color_table[0x300];
 	uint8_t char_color, back_color, mp1710_enb;
+	bool mp1710_on;	// $E892 has been written: the adapter is fitted
 	uint8_t screen_mode;
 	bool screen_reversed;
 	scrntype_t palette_pc[8];
@@ -70,6 +71,7 @@ public:
 	void reset();
 	void write_data8(uint32_t addr, uint32_t data);
 	uint32_t read_data8(uint32_t addr);
+	uint32_t read_data8_bus(uint32_t addr);
 	void write_signal(int id, uint32_t data, uint32_t mask);
 	void event_frame();
 	void mix(int32_t* buffer, int cnt);
@@ -91,6 +93,14 @@ public:
 	}
 	void key_down(int code);
 	void draw_screen();
+	uint8_t* get_ram()
+	{
+		return ram;	// headless mode (mac/bmjr_cli.mm --dump-mem, --poke)
+	}
+	bool is_io(uint32_t addr)
+	{
+		return (addr & 0xfe00) == 0xee00 || ((addr & 0xf800) == 0xe800 && !(memory_bank & 2));
+	}
 };
 
 #endif

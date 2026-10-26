@@ -10,6 +10,8 @@
 #include "memory.h"
 #include "../datarec.h"
 
+void (*bmjr_cli_io_hook)(bool, uint16_t, uint8_t) = nullptr;	// headless mode (mac/bmjr_cli.mm --trace-io)
+
 #define SET_BANK(s, e, w, r) { \
 	int sb = (s) >> 11, eb = (e) >> 11; \
 	for(int i = sb; i <= eb; i++) { \
@@ -107,6 +109,7 @@ void MEMORY::reset()
 	memset(color_table, 7, sizeof(color_table));
 	char_color = 7;
 	back_color = mp1710_enb = 0;
+	mp1710_on = false;
 	
 	screen_mode = 0;
 	screen_reversed = false;
@@ -123,6 +126,7 @@ void MEMORY::reset()
 
 void MEMORY::write_data8(uint32_t addr, uint32_t data)
 {
+	if(bmjr_cli_io_hook && is_io(addr)) bmjr_cli_io_hook(true, uint16_t(addr), uint8_t(data));
 	if((addr & 0xfe00) == 0xee00) {
 		// EE00h - EFFFh
 		switch(addr & 0xffff) {
@@ -172,18 +176,29 @@ void MEMORY::write_data8(uint32_t addr, uint32_t data)
 			back_color = data;
 			break;
 		case 0xe892:
+			// bit0: colour information write enable (as bm2). Any write
+			// means the MP-1710 is fitted and turns the colour display on.
 			mp1710_enb = data;
+			mp1710_on = true;
 			break;
 		}
 		return;
 	}
-	if(addr >= 0x100 && addr < 0x400) {
+	if(addr >= 0x100 && addr < 0x400 && (mp1710_enb & 1)) {
 		color_table[addr - 0x100] = char_color;
 	}
 	wbank[(addr >> 11) & 0x1f][addr & 0x7ff] = data;
 }
 
 uint32_t MEMORY::read_data8(uint32_t addr)
+{
+	bool io = bmjr_cli_io_hook && is_io(addr);
+	uint32_t val = read_data8_bus(addr);
+	if(io) bmjr_cli_io_hook(false, uint16_t(addr), uint8_t(val));
+	return val;
+}
+
+uint32_t MEMORY::read_data8_bus(uint32_t addr)
 {
 	if((addr & 0xfe00) == 0xee00) {
 		// EE00h - EFFFh
@@ -340,8 +355,8 @@ void MEMORY::draw_screen()
 		
 		for(int y = 0, yy = 0; y < 24; y++, yy += 8) {
 			for(int x = 0, xx = 0; x < 32; x++, xx += 8) {
-				if(mp1710_enb & 1) {
-					uint8_t color = color_table[taddr];
+				if(mp1710_on) {
+					uint8_t color = color_table[taddr - 0x100];
 					if(screen_reversed) {
 						color = (color >> 4) | (color << 4);
 					}
@@ -373,8 +388,8 @@ void MEMORY::draw_screen()
 		
 		for(int y = 0, yy = 0; y < 24; y++, yy += 8) {
 			for(int x = 0, xx = 0; x < 32; x++, xx += 8) {
-				if(mp1710_enb & 1) {
-					uint8_t color = color_table[taddr];
+				if(mp1710_on) {
+					uint8_t color = color_table[taddr - 0x100];
 					if(screen_reversed) {
 						color = (color >> 4) | (color << 4);
 					}
@@ -402,7 +417,7 @@ void MEMORY::draw_screen()
 //	emu->screen_skip_line(false);
 }
 
-#define STATE_VERSION	2
+#define STATE_VERSION	3
 
 bool MEMORY::process_state(FILEIO* state_fio, bool loading)
 {
@@ -418,6 +433,7 @@ bool MEMORY::process_state(FILEIO* state_fio, bool loading)
 	state_fio->StateValue(char_color);
 	state_fio->StateValue(back_color);
 	state_fio->StateValue(mp1710_enb);
+	state_fio->StateValue(mp1710_on);
 	state_fio->StateValue(screen_mode);
 	state_fio->StateValue(screen_reversed);
 	state_fio->StateValue(drec_bit);
