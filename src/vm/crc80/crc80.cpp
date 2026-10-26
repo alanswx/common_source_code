@@ -44,7 +44,7 @@ VM::VM(EMU* parent_emu) : VM_TEMPLATE(parent_emu)
 	drec->set_context_noise_fast(new NOISE(this, emu));
 	io = new IO(this, emu);
 	io->space = 0x100;
-	not = new NOT(this, emu);
+	not_ear = new NOT(this, emu);
 	cpu = new Z80(this, emu);
 	pio = new Z80PIO(this, emu);
 	
@@ -60,8 +60,8 @@ VM::VM(EMU* parent_emu) : VM_TEMPLATE(parent_emu)
 	event->set_context_sound(drec->get_context_noise_stop());
 	event->set_context_sound(drec->get_context_noise_fast());
 	
-	drec->set_context_ear(not, SIG_NOT_INPUT, 1);
-	not->set_context_out(pio, SIG_Z80PIO_PORT_B, 0x80);
+	drec->set_context_ear(not_ear, SIG_NOT_INPUT, 1);
+	not_ear->set_context_out(pio, SIG_Z80PIO_PORT_B, 0x80);
 	pio->set_context_port_b(drec, SIG_DATAREC_MIC, 0x40, 0);
 	pio->set_context_port_a(display, SIG_DISPLAY_PA, 0xff, 0);
 	pio->set_context_port_b(display, SIG_DISPLAY_PB, 0x0f, 0);

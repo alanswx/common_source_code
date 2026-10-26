@@ -67,16 +67,16 @@ extern UINT32		codefetch_address;
 #endif
 
 #ifndef SINT8
-	typedef signed __int8 SINT8;
+	typedef int8_t SINT8;
 #endif
 #ifndef SINT16
-	typedef signed __int16 SINT16;
+	typedef int16_t SINT16;
 #endif
 #ifndef SINT32
-	typedef signed __int32 SINT32;
+	typedef int32_t SINT32;
 #endif
 #ifndef SINT64
-	typedef signed __int64 SINT64;
+	typedef int64_t SINT64;
 #endif
 
 /* Little Ending */

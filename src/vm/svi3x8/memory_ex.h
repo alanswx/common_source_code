@@ -53,7 +53,7 @@ private:
 	int done;
 	int tapePos;
 	int tapeLen;
-	byte tapedata[MAX_TAPE_LEN];
+	uint8_t tapedata[MAX_TAPE_LEN];
 
 public:
 	MEMORY_EX(VM_TEMPLATE* parent_vm, EMU* parent_emu) : DEVICE(parent_vm, parent_emu)

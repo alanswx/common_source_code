@@ -115,6 +115,9 @@
 #include <unistd.h>
 #endif
 #include <math.h>
+#ifndef _isnan
+	#define _isnan isnan
+#endif
 #ifdef _MSC_VER
 	#if _MSC_VER < 1920
 		#include <typeinfo.h>
@@ -155,6 +158,9 @@
 #endif
 #ifndef _MAX_PATH
 	#define _MAX_PATH 2048
+#endif
+#ifndef MAX_PATH
+	#define MAX_PATH _MAX_PATH
 #endif
 
 // endian
@@ -283,6 +289,15 @@
 	#endif
 	#ifndef ULONG_PTR
 		typedef uintptr_t ULONG_PTR;
+	#endif
+	#ifndef SOCKET
+		typedef int SOCKET;
+	#endif
+	#ifndef INVALID_SOCKET
+		#define INVALID_SOCKET (-1)
+	#endif
+	#ifndef SOCKET_ERROR
+		#define SOCKET_ERROR (-1)
 	#endif
 #endif
 
@@ -883,6 +898,12 @@ int16_t DLL_PREFIX ExchangeEndianS16(uint16_t x);
 	#endif
 	#ifndef _stprintf
 		#define _stprintf sprintf
+	#endif
+	#ifndef _sntprintf
+		#define _sntprintf snprintf
+	#endif
+	#ifndef _snprintf
+		#define _snprintf snprintf
 	#endif
 	#ifndef _vstprintf
 		#define _vstprintf vsprintf

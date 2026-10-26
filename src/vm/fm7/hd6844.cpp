@@ -50,7 +50,7 @@ void HD6844::initialize()
 	}
 	__USE_CHAINING = true;
 	__USE_MULTIPLE_CHAINING = true;
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__APPLE__)
 	#if defined(_FM77AV40)
 		__FM77AV40 = true;
 	#else

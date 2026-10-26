@@ -125,7 +125,7 @@ protected:
 	
 	DATAREC* drec;
 	IO* io;
-	NOT* not;
+	NOT* not_ear;
 	Z80* cpu;
 	Z80PIO* pio;
 	

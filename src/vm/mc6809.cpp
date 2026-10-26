@@ -119,19 +119,19 @@ void MC6809::debugger_hook()
 			d_debugger->check_break_points(PC);
 			if(d_debugger->now_suspended) {
 				d_debugger->now_waiting = true;
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__APPLE__)
 				emu->start_waiting_in_debugger();
 #else
 				osd->start_waiting_in_debugger();
 #endif
 				while(d_debugger->now_debugging && d_debugger->now_suspended) {
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__APPLE__)
 					emu->process_waiting_in_debugger();
 #else
 					osd->process_waiting_in_debugger();
 #endif
 				}
-#ifdef _MSC_VER
+#if defined(_MSC_VER) || defined(__APPLE__)
 				emu->finish_waiting_in_debugger();
 #else
 				osd->finish_waiting_in_debugger();

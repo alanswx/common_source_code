@@ -33,6 +33,7 @@
 #define VK_PAUSE      0x13
 #define VK_CAPITAL    0x14
 #define VK_KANA       0x15
+#define VK_KANJI      0x19
 #define VK_ESCAPE     0x1B
 #define VK_CONVERT    0x1C
 #define VK_NONCONVERT 0x1D
@@ -295,13 +296,46 @@ public:
 	}
 	scrntype_t* get_vm_screen_buffer(int y);
 	int draw_screen();
+#ifdef ONE_BOARD_MICRO_COMPUTER
+	void reload_bitmap() {}
+#endif
 	void capture_screen();
+	void capture_screen_to(const _TCHAR *path) { write_bitmap_to_file(&vm_screen_buffer, path); }   // scripted mode
 	bool start_record_video(int fps) { return false; }
 	void stop_record_video() {}
 	void restart_record_video() {}
 	void add_extra_frames(int extra_frames) {}
 	bool now_record_video;
 	bool screen_skip_line;
+
+#if defined(USE_MOVIE_PLAYER) || defined(USE_VIDEO_CAPTURE)
+	void get_video_buffer() {}
+	void mute_video_dev(bool l, bool r) {}
+#endif
+
+#ifdef USE_MOVIE_PLAYER
+	bool open_movie_file(const _TCHAR* file_path) { return false; }
+	void close_movie_file() {}
+	void play_movie() {}
+	void stop_movie() {}
+	void pause_movie() {}
+	double get_movie_frame_rate() { return 0.0; }
+	int get_movie_sound_rate() { return 0; }
+	void set_cur_movie_frame(int frame, bool relative) {}
+	uint32_t get_cur_movie_frame() { return 0; }
+#endif
+
+#ifdef USE_VIDEO_CAPTURE
+	int get_cur_capture_dev_index() { return 0; }
+	int get_num_capture_devs() { return 0; }
+	_TCHAR* get_capture_dev_name(int index) { return NULL; }
+	void open_capture_dev(int index, bool pin) {}
+	void close_capture_dev() {}
+	void show_capture_dev_filter() {}
+	void show_capture_dev_pin() {}
+	void show_capture_dev_source() {}
+	void set_capture_dev_channel(int ch) {}
+#endif
 
 	// Framebuffer access for Metal
 	const scrntype_t* get_current_frame_pixels() const { return vm_screen_buffer.lpBmp; }
@@ -339,6 +373,23 @@ public:
 #ifdef USE_MIDI
 	void send_to_midi(uint8_t data) {}
 	bool recv_from_midi(uint8_t *data) { return false; }
+#endif
+
+	// Socket
+#ifdef USE_SOCKET
+	SOCKET get_socket(int ch) { return INVALID_SOCKET; }
+	void notify_socket_connected(int ch) {}
+	void notify_socket_disconnected(int ch) {}
+	void update_socket() {}
+	bool initialize_socket_tcp(int ch) { return false; }
+	bool initialize_socket_udp(int ch) { return false; }
+	bool connect_socket(int ch, uint32_t ipaddr, int port) { return false; }
+	void disconnect_socket(int ch) {}
+	bool listen_socket(int ch) { return false; }
+	void send_socket_data_tcp(int ch) {}
+	void send_socket_data_udp(int ch, uint32_t ipaddr, int port) {}
+	void send_socket_data(int ch) {}
+	void recv_socket_data(int ch) {}
 #endif
 };
 

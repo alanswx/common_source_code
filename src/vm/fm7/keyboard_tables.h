@@ -30,7 +30,7 @@ const uint16_t vk_matrix_106[0x68] = { // VK
 	VK_OEM_1,	VK_OEM_6, 	'Z',		'X',		'C',		'V',		'B',		'N',		// +0x28
 	/* M, , , ., / , \, RSPACE=Henkan , * , / */
 	'M',		VK_OEM_COMMA,	VK_OEM_PERIOD,	VK_OEM_2,	VK_OEM_102,	VK_CONVERT,	VK_MULTIPLY,	VK_DIVIDE,	// +0x30
-#if defined(_MSC_VER) || defined(Q_OS_WIN)
+#if defined(_MSC_VER) || defined(Q_OS_WIN) || defined(__APPLE__)
 	/* + , - , 7, 8, 9, = = RWIN or Scroll Lock (Windows), 4, 5 */
 	VK_ADD,		VK_SUBTRACT,	VK_NUMPAD7,	VK_NUMPAD8,	VK_NUMPAD9,	VK_SCROLL,	VK_NUMPAD4,	VK_NUMPAD5,	// +0x38
 #else
@@ -41,7 +41,7 @@ const uint16_t vk_matrix_106[0x68] = { // VK
 	/* INS, EL, CLS, DEL, DUP, ↑, HOME,← */
 	VK_INSERT,	VK_PRIOR,	VK_NEXT,	VK_DELETE,	VK_END,		VK_UP,		VK_HOME,	VK_LEFT,	// +0x48
 	/* ↓, →, LCTRL, LSHIFT or SHIFT (Winwdows), RSHIFT, CAPS, Graph=LWIN or ALT (WIndows), Lspace=Muhenkan */
-#if defined(_MSC_VER) || defined(Q_OS_WIN)
+#if defined(_MSC_VER) || defined(Q_OS_WIN) || defined(__APPLE__)
 	VK_DOWN,	VK_RIGHT,	VK_CONTROL,	VK_LSHIFT,	VK_RSHIFT,	VK_CAPITAL,	VK_LMENU,	VK_NONCONVERT,	// +0x50
 #else   
 	VK_DOWN,	VK_RIGHT,	VK_CONTROL,	VK_LSHIFT,	VK_RSHIFT,	VK_CAPITAL,	VK_LWIN,	VK_NONCONVERT,	// +0x50
