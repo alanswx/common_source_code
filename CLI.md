@@ -90,5 +90,6 @@ waits for the drive before BASIC starts.
 | msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
 | pc6001 | | Needs a real `SUBCPU.60` (8049 keyboard MCU). MAME's `upd8049.ic17` is a bad dump and hangs at boot |
 
-Tested end to end with `--paste` (type a listing, `RUN`, check the output): FM-7, PC-8001, PC-8001mkII, PC-8801,
-PC-8801mkII, PC-8801MA.
+Tested end to end with `--paste` (type a listing, `RUN`, check the output): FM-7, MSX1 (no disk ROM), PC-8001,
+PC-8001mkII, PC-8801, PC-8801mkII, PC-8801MA. The MZ-700 and X1 boot to a monitor or IPL; their BASIC loads
+from tape or disk, which the run must supply.
