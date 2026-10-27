@@ -76,3 +76,19 @@ The input is UTF-8:
 
 Typing speed is the machine's: with default settings a line of 30 characters takes several seconds of emulated
 time. The emulator runs much faster than real time, so this costs little wall-clock time.
+
+## Machine notes
+
+Frames at which BASIC is ready, measured with the ROM sets noted. With a disk ROM present, the PC-80/88 family
+waits for the drive before BASIC starts.
+
+| Machine | Ready at | Notes |
+| --- | --- | --- |
+| fm7 | ~600 | |
+| pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
+| pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
+| msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
+| pc6001 | | Needs a real `SUBCPU.60` (8049 keyboard MCU). MAME's `upd8049.ic17` is a bad dump and hangs at boot |
+
+Tested end to end with `--paste` (type a listing, `RUN`, check the output): FM-7, PC-8001, PC-8001mkII, PC-8801,
+PC-8801mkII, PC-8801MA.

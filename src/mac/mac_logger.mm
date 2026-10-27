@@ -156,12 +156,14 @@ static std::vector<RomRequirement> get_requirements_for_machine(const std::strin
 	if(m == "pc6001") {
 		return {
 			{"BASICROM.60", {"BASICROM.60"}},
-			{"CGROM60.60", {"CGROM60.60"}}
+			{"CGROM60.60", {"CGROM60.60"}},
+			{"SUBCPU.60", {"SUBCPU.60"}}
 		};
 	}
 	if(m == "pc8001" || m == "pc8001mk2" || m == "pc8001mk2sr") {
 		return {
-			{"N80.ROM", {"N80.ROM", "N80_1.ROM", "PC88.ROM"}}
+			{"N80.ROM", {"N80.ROM", "N80_1.ROM", "PC88.ROM"}},
+			{"KANJI1.ROM or FONT.ROM", {"KANJI1.ROM", "FONT.ROM"}}
 		};
 	}
 	if(m == "pc8201" || m == "pc8201a") {

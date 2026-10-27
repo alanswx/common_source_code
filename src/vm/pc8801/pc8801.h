@@ -198,8 +198,8 @@
 #endif
 #define USE_KEY_LOCKED
 // slow enough for N88-“ú–{ŒêBASIC
-#define USE_AUTO_KEY		8
-#define USE_AUTO_KEY_RELEASE	10
+#define USE_AUTO_KEY		10
+#define USE_AUTO_KEY_RELEASE	12
 #define USE_AUTO_KEY_NUMPAD
 #define USE_MONITOR_TYPE	2
 #define USE_SCREEN_FILTER

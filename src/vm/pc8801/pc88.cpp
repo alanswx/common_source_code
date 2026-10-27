@@ -324,6 +324,10 @@ void PC88::initialize()
 	if(fio->Fopen(create_local_path(_T("KANJI1.ROM")), FILEIO_READ_BINARY)) {
 		fio->Fread(kanji1, 0x20000, 1);
 		fio->Fclose();
+	} else if(fio->Fopen(create_local_path(_T("FONT.ROM")), FILEIO_READ_BINARY)) {
+		// 8x8 ANK font only (the 2KB CG ROM at 1000h-17FFh in KANJI1.ROM)
+		fio->Fread(kanji1 + 0x1000, 0x800, 1);
+		fio->Fclose();
 	}
 //#endif
 #ifdef SUPPORT_PC88_KANJI2
