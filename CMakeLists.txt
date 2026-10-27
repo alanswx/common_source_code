@@ -36,6 +36,7 @@ set(RETROPC_COMMON_SOURCES
     src/emu.cpp
     src/cli/headless.cpp
     src/cli/paste.cpp
+    src/cli/screen_text.cpp
     src/posix/osd.cpp
 )
 

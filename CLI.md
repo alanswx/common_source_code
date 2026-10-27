@@ -26,7 +26,8 @@ original CLIs.
 - `--out NEW_DIR` must not exist yet; its parent must. Relative output names resolve under it, and existing files
   are never overwritten.
 - Frames are numbered 0..N inclusive. Scheduled actions happen before a frame; captures happen after it.
-- Success prints one JSON line and exits 0. Any error prints `[headless] ERROR: ...` and exits 2.
+- Success prints one JSON line and exits 0. Any error prints `[headless] ERROR: ...` and exits 2. A `--script` that
+  fails or times out still prints the JSON line, with `"status":"script_failed"`, and exits 1.
 
 ## Options
 
@@ -56,6 +57,9 @@ original CLIs.
 | `--poke ADDR=BYTES@FRAME`, `--dump-mem ADDR:LEN@FRAME`, `--dump-memory FILE` | 64 KiB through the CPU's debugger view (hex) |
 | `--wav FILE` | The mixed sound output |
 | `--monitor-type N` | The machine's Monitor Type menu item, 0 = first (machines with that menu) |
+| `--script FILE` | Run a script of commands that wait on the screen (see below); the run ends when it does |
+| `--font FILE` | A screen font from `learn-font`, for reading the screen as text |
+| `--text FRAME`, `--final-text` | `OUT/text_NNNNNN.txt`, the screen as UTF-8 text (needs a font) |
 | `--host-time YYYY-MM-DDTHH:MM:SS` | Clock chips read this time plus the emulated time instead of the host clock, so runs are reproducible (`TIME$`, and the PC-8001's calendar bit on port 40h) |
 
 `OUT/frames.csv` has one row per frame: frame, emulator clock, width, height, next PC and an FNV-1a-64 hash of
@@ -81,6 +85,105 @@ The input is UTF-8:
 Typing speed is the machine's: with default settings a line of 30 characters takes several seconds of emulated
 time. The emulator runs much faster than real time, so this costs little wall-clock time.
 
+## Reading the screen
+
+The CLI reads the screen back as text on any machine, with no knowledge of its video hardware. It learns the
+machine's own glyphs first. The script command `learn-font` types `REM` lines through auto key, one group of
+characters per line, and compares the frame before and after each:
+
+- The first line, `REM ABCDEFGHIJKLMR`, gives the cell grid: the cell width and x origin at which the typed
+  letters fill consecutive cells with the fewest strokes crossing a cell edge, and the cell height and y origin
+  that cut the fewest strokes in the text above.
+- Each later line adds glyphs: digits, punctuation, lowercase and the 63 kana. The letters already learned must
+  read back as themselves, which catches a character with no key (a group that fails is retried one character
+  at a time, then skipped). A character drawn exactly like an earlier one is an alias, such as the X1's
+  long-vowel mark and minus sign. When several characters of a group come out as known glyphs the keys typed
+  something else instead (MZ-700 kana come out as ASCII), and those characters are recorded as having no key.
+- The result is `OUT/font.txt`: frame size, cell grid, glyph bitmaps, aliases and the characters with no key. The
+  JSON field `screen_font` summarises it.
+
+Reading a frame matches each cell's ink (any colour other than the frame's most common one) against the glyphs.
+A reversed cell, such as the cursor or reverse video, is also tried. If neither matches, the nearest glyph within a
+few pixels is used, and failing that the cell is U+FFFD. A font only reads frames of the size it was learned at.
+
+| Machine | Cell (pixels) | Grid | Glyphs | No key |
+| --- | --- | --- | --- | --- |
+| fm7 | 16x20 | 40x20 | 157 | |
+| msx1 | 16x16 | 32x24 | 157 | |
+| pc6001 | 8x12 | 32x16 | 151 | `{` `\|` `}` `~` |
+| pc8001 | 16x20 | 40x20 | 152 | `` ` `` `{` `\|` `}` `~` |
+| pc8801 | 8x16 | 80x25 | 156 | |
+| mz700 | 16x16 | 40x25 | 97 | kana |
+| x1 | 16x16 | 40x25 | 156 | |
+| bmjr | 8x8 | 32x24 | 61 | `\` `` ` `` `{` `\|` `}` `~` `_`, lowercase and kana (typed with keys) |
+
+The SMC-777 has no BASIC in ROM, so it needs a system disk before anything can be learned.
+
+## Scripts
+
+`--script FILE` runs one command per line, in order (`#` starts a comment). Waits fail the run after `timeout`
+frames; `--stop-at-frame` still bounds the whole run.
+
+| Command | Effect |
+| --- | --- |
+| `frames N` | Run N frames |
+| `learn-font`, `font FILE` | Learn the screen font into `OUT/font.txt`, or load one |
+| `wait TEXT` | Until TEXT appears anywhere on the screen |
+| `prompt TEXT` | Until a row below the line typed last is TEXT, such as `Ok` or `Ready`. A prompt already on the screen does not count |
+| `idle N` | Until auto key is idle and the screen text has not changed for N frames (one changing cell is the cursor blinking) |
+| `timeout N` | Frames a `wait`, `prompt` or `idle` may take (default 3000) |
+| `paste FILE`, `line TEXT` | Paste a file (relative to the script) or one line, as `--paste` does, and wait until it is typed |
+| `line-gap N` | Frames between pasted lines, as `--paste-line-gap` |
+| `type KEYS` | Scheduled keys in the `--type` syntax |
+| `errors A\|B` | Report screen rows that newly contain A or B (case-insensitive) as `screen_errors`, with the pasted line they followed |
+| `text NAME`, `shot NAME` | The screen as text, or a PNG, in OUT |
+| `tape FILE`, `record NAME`, `eject` | Play a tape, record to `OUT/NAME`, or stop the tape |
+| `reset`, `stop` | Reset the machine; end the run |
+
+On the Basic Master Jr. and on machines without auto key, `paste` and `line` type with scheduled keys, one line at
+a time, with waits before and after each line. The BMJR's BASIC does not echo characters typed by auto key.
+
+```
+frames 600
+learn-font
+errors error
+paste listing.bas
+idle 30
+line LIST
+idle 30
+text list.txt
+```
+
+## Typing in listings: tool/typein.py
+
+`tool/typein.py MACHINE LISTING --rom-dir DIR --out NEW_DIR` types a listing, checks it, and saves it:
+
+1. The first time for a machine, it boots and runs `learn-font`, caching the font in `~/.cache/retropc-typein`.
+2. It boots, pastes the listing and reports any `screen_errors`. It then lists the program one screenful at a
+   time (`LIST a-b`) and compares each line with the listing. Spaces outside strings, letter case outside
+   strings, `?` versus `PRINT`, a leading `LET` and look-alike glyphs are ignored. Finally it saves the program
+   (`--save tape`, the default; `--save disk` on the X1 writes a copy of the BASIC disk with the program on it).
+3. It boots again, loads the saved copy, and lists and compares it again.
+
+`OUT/report.json` has the mismatches, the screen errors and any listing characters the machine has no key for.
+The exit status is 0 when every line came back as typed, 1 when not, and 2 on an error. Use `--build DIR` for
+the build directory (default `build`, or `$RETROPC_BUILD`). The MZ-700 needs its BASIC tape and the X1 its
+Hu-BASIC disk, given with `--basic FILE`.
+
+Tested with a 36-line listing (long wrapped lines, kana, lowercase strings, `?`):
+
+| Machine | Saved as | Result |
+| --- | --- | --- |
+| fm7 | `.t77` | Typed, listed, saved and loaded back identical |
+| pc8001, pc8801 | `.cmt` | Identical |
+| msx1 | `.wav` | Identical |
+| x1 | `.tap`, or `.d88` with `--save disk` | Identical. A `.wav` recording gives "Tape read error" on loading |
+| bmjr | `.wav` | Identical (a 7-line uppercase listing; `LIST a,b`) |
+| mz700 | `.wav` | Every line typed. Kana come out as ASCII (no key), which typein reports. Needs `line-gap 30`, or BASIC drops the first character of the next line |
+| pc6001 | `.p6` | Lines longer than about 80 characters are cut short by BASIC, which typein reports. Not loaded back: `CLOAD` finds nothing with the `SUBCPU.60` tested, even with the archive's own `.p6t` tapes |
+
+The runs are the same on macOS and Linux: the learned font and the saved tape are byte-identical.
+
 ## Machine notes
 
 Frames at which BASIC is ready, measured with the ROM sets noted. With a disk ROM present, the PC-80/88 family
@@ -91,7 +194,7 @@ waits for the drive before BASIC starts.
 | fm7 | ~600 | |
 | msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
 | mz700 | ~13450 | Boots to the monitor. BASIC 1Z-013B from tape: `--type 300:L\n --tape 1Z-013B.mzf --tape-at 360`. "Ready" shows as kana with the Japanese `FONT.ROM` |
-| pc6001 | ~600 | Stops at `How Many Pages?`. Needs `SUBCPU.60`; MAME's `upd8049.ic17` is a bad dump. PC6001VX's compatible `SUBCPU.60` works. `--paste` selects katakana mode (SHIFT+PAGE) before the first line |
+| pc6001 | ~600 | Stops at `How Many Pages?`. Needs `SUBCPU.60`; MAME's `upd8049.ic17` is a bad dump. PC6001VX's compatible `SUBCPU.60` runs BASIC and the keyboard, but `CLOAD` finds nothing with it. `--paste` selects katakana mode (SHIFT+PAGE) before the first line |
 | pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
 | pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
 | x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting |

@@ -13,6 +13,7 @@
 #include "../vm/device.h"
 #include "headless.h"
 #include "paste.h"
+#include "screen_text.h"
 #if defined(_BMJR)
 #include "../vm/bmjr/memory.h"
 #endif
@@ -21,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <list>
 #include <map>
 #include <memory>
 #include <set>
@@ -69,10 +71,10 @@ struct Dump { int frame; unsigned addr, len; };
 struct Poke { int frame; unsigned addr; std::vector<uint8_t> bytes; };
 struct Paste { int frame; std::vector<std::string> lines, source; };
 struct Options {
-    std::string rom_dir, out, disk[4], disk_output[4], tape, record, qd, cart, cpu, io, memory, wav;
+    std::string rom_dir, out, disk[4], disk_output[4], tape, record, qd, cart, cpu, io, memory, wav, script, font;
     int stop = -1, every = 0, press = 4, release = 4, line_gap = 0, after_paste = -1, monitor_type = -1, tape_at = 0;
-    bool writable = false, final_shot = false;
-    std::set<int> shots, resets, special_resets;
+    bool writable = false, final_shot = false, final_text = false;
+    std::set<int> shots, resets, special_resets, texts;
     std::multimap<int,Key> keys;
     std::multimap<int,std::pair<int,uint32_t>> joys;
     std::vector<std::pair<int,std::string>> types;
@@ -355,15 +357,14 @@ const int SHIFT_KEY=0x10;
 const bool SHIFTED_CAPITALS=false;
 const std::map<char,std::pair<int,bool>> PUNCT;
 #endif
-void type_keys(Options &o) {
+// schedules TEXT's keys from FRAME and returns the frame after the last release
+int type_text(Options &o,int frame,const std::string &s) {
     std::map<std::string,int> named={{"RETURN",13},{"SPACE",32},{"ESC",27},{"BS",8},{"TAB",9},{"DEL",0x2e},
         {"HOME",36},{"INS",45},{"UP",38},{"DOWN",40},{"LEFT",37},{"RIGHT",39},{"BREAK",0x13}};
 #if defined(CLI_BMJR)
     named["EISU"]=KEY_EISU;named["KANA"]=KEY_KANA;
 #endif
-    for(auto &t:o.types) {
-        int frame=t.first;
-        const std::string &s=t.second;
+    {
         for(size_t i=0;i<s.size();i++) {
             unsigned char c=s[i];int code=0,shift=0;
             if(c=='{') {
@@ -403,7 +404,9 @@ void type_keys(Options &o) {
             frame+=o.press+o.release;
         }
     }
+    return frame;
 }
+void type_keys(Options &o) { for(auto &t:o.types) type_text(o,t.first,t.second); }
 
 // --- --paste: text through the VM's auto key (EMU::set_auto_key_list, the Windows "Paste") ---------------
 Paste make_paste(int frame,const std::string &text) {
@@ -427,6 +430,7 @@ struct PasteRun {
     FILE *log=nullptr;
     size_t total() const { size_t n=0;for(auto p:queue) n+=p->lines.size();return n; }
     size_t typed=0;
+    std::string last_source;   // the source of the line typed last
     bool done() const { return paste>=queue.size(); }
     PastePreamble preamble;   // PC-6001: katakana mode, once before the first line
     void step(int gap) {
@@ -444,10 +448,331 @@ struct PasteRun {
         std::string text=p.lines[line]+"\r";
         machine->set_auto_key_list(&text[0],int(text.size()));
         machine->start_auto_key();
-        line_start=current_frame;idle_since=-1;line++;typed++;
+        line_start=current_frame;idle_since=-1;line++;typed++;last_source=p.source[line-1];
 #endif
     }
 } paste_run;
+
+// --- screen text and --script -----------------------------------------------------------------------------
+ScreenFont font;
+ScreenImage screen;                     // the last drawn frame, when anything reads the screen
+std::vector<std::string> screen_rows;   // its text, once a font is loaded
+void capture_screen() {
+    OSD *osd=machine->get_osd();
+    screen.w=osd->get_frame_width();screen.h=osd->get_frame_height();
+    const scrntype_t *p=osd->get_current_frame_pixels();
+    screen.px.resize(size_t(screen.w)*screen.h);
+    for(size_t i=0;i<screen.px.size();i++) screen.px[i]=uint32_t(R_OF_COLOR(p[i]))<<16 | uint32_t(G_OF_COLOR(p[i]))<<8 | uint32_t(B_OF_COLOR(p[i]));
+    screen_rows=font.read(screen);
+}
+void need_font() {
+    if(!font.ready()) throw std::runtime_error("reading the screen needs a font (--font, or the script's learn-font)");
+    if(screen.w && screen_rows.empty()) throw std::runtime_error("the frame is "+std::to_string(screen.w)+"x"+std::to_string(screen.h)+
+        ", the font was learned at "+std::to_string(font.frame_w)+"x"+std::to_string(font.frame_h));
+}
+void write_text(const std::string &path) {
+    need_font();
+    FILE *f=output(path);
+    for(auto &r:screen_rows) fprintf(f,"%s\n",screen_utf8(r).c_str());
+    if(fclose(f)) throw std::runtime_error("text write failed");
+}
+std::string lower(std::string s) { for(auto &c:s) c=char(tolower((unsigned char)c));return s; }
+
+// errors: a screen row that newly matches one of the patterns (case-insensitive), credited to the pasted line
+struct ScreenError { int frame; size_t line; std::string source, screen; };
+std::vector<std::string> error_patterns;
+std::vector<ScreenError> screen_errors;
+int error_rows=0;
+std::vector<std::string> previous_rows;
+// the number of cells that differ, up to 2; one changing cell is the cursor blinking
+int changed_cells(const std::vector<std::string> &a,const std::vector<std::string> &b) {
+    if(a.size()!=b.size()) return 2;
+    int changed=0;
+    for(size_t r=0;r<a.size() && changed<2;r++)
+        for(size_t k=0;k<std::max(a[r].size(),b[r].size()) && changed<2;k++) changed+=(k<a[r].size() ? a[r][k] : ' ')!=(k<b[r].size() ? b[r][k] : ' ');
+    return changed;
+}
+int error_count(std::string *newest) {
+    int n=0;
+    for(auto &r:screen_rows) {
+        std::string u=screen_utf8(r),l=lower(u);
+        for(auto &p:error_patterns) if(l.find(p)!=std::string::npos) { n++;if(newest) *newest=u;break; }
+    }
+    return n;
+}
+void check_errors() {
+    if(error_patterns.empty() || screen_rows.empty()) return;
+    // only a screen that held still for a frame: a software scroll shows a row twice while it copies
+    bool still=changed_cells(screen_rows,previous_rows)<2;
+    previous_rows=screen_rows;
+    if(!still) return;
+    std::string newest;
+    int n=error_count(&newest);
+    if(n>error_rows) {
+        screen_errors.push_back({current_frame,paste_run.typed,paste_run.last_source,newest});
+        fprintf(stderr,"[headless] frame %d screen error after pasted line %zu: %s\n",current_frame,paste_run.typed,newest.c_str());
+    }
+    error_rows=n;
+}
+
+// Basic Master Jr. BASIC does not echo what auto key types, and the SMC-777 has none: there the script types
+// with scheduled keys (--type), a line at a time with time after RETURN for the line to be taken
+#if defined(CLI_BMJR) || defined(CLI_SMC777) || !defined(USE_AUTO_KEY)
+const bool SCRIPT_TYPES_KEYS=true;
+#else
+const bool SCRIPT_TYPES_KEYS=false;
+#endif
+bool has_key(char c) {
+    if(c=='{' || c=='\\') return false;   // key tokens and \n
+    try { Options scratch;type_text(scratch,0,std::string(1,c));return true; } catch(const std::exception &) { return false; }
+}
+
+// learn-font: type each group after REM on a fresh line and learn its cells; a group whose cells do not line up
+// (a character with no key) is retried one character at a time, and a character that still fails is skipped
+struct Learn {
+    std::vector<std::string> groups;
+    std::string skipped;
+    size_t next=0;
+    int phase=0, since=0;
+    std::string text;
+    ScreenImage before;
+    PastePreamble preamble;
+    bool kana_ready=false;
+    int until=0;   // SCRIPT_TYPES_KEYS: the frame after the scheduled keys
+    void start() {
+        skipped.clear();
+        groups={"ABCDEFGHIJKLM","NOPQRSTUVWXYZ","0123456789","!\"#$%&'()*+,-","./:;<=>?@[\\]^","_`{|}~",
+            "abcdefghijklm","nopqrstuvwxyz"};
+        if(SCRIPT_TYPES_KEYS) {
+            for(auto &g:groups) {
+                std::string keep;
+                for(char c:g) if(has_key(c)) keep+=c; else skipped+=c;
+                g=keep;
+            }
+        } else for(int c=0xa1;c<=0xdf;c+=16) { std::string g;for(int k=c;k<c+16 && k<=0xdf;k++) g+=char(k);groups.push_back(g); }
+        next=0;phase=0;since=current_frame;
+    }
+    void type(Options &o,const std::string &keys) {
+        if(SCRIPT_TYPES_KEYS) until=type_text(o,current_frame,keys);
+#ifdef USE_AUTO_KEY
+        else { std::string t=keys;machine->set_auto_key_list(&t[0],int(t.size()));machine->start_auto_key(); }
+#endif
+    }
+    bool step(Options &o,std::string *error) {
+        {
+            bool busy=SCRIPT_TYPES_KEYS ? current_frame<until : false;
+#ifdef USE_AUTO_KEY
+            busy=busy || machine->is_auto_key_running();
+#endif
+            if(busy || !screen.w) { since=current_frame;return false; }
+        }
+        if(phase==0) {
+            if(current_frame-since<30) return false;
+            if(next>=groups.size()) return true;
+            const std::string &g=groups[next];
+            if(g.empty()) { next++;return false; }
+            if((unsigned char)g[0]>=0xa1 && !kana_ready) {
+                if(!preamble.step(machine)) return false;
+                kana_ready=true;since=current_frame;return false;
+            }
+            before=screen;text="REM "+g+"R";
+            type(o,text);
+            phase=1;since=current_frame;
+            return false;
+        }
+        if(current_frame-since<10) return false;
+        std::string why;
+        const std::map<char,char> aliases=font.aliases;
+        int n=font.learn_line(before,screen,text,&why);
+        // more than two characters of a group drawn as ones already learned: the keys typed something else
+        // (MZ-700 kana come out as ASCII), not look-alike glyphs (the X1's long vowel mark and minus sign)
+        std::string typed_other;
+        for(auto &a:font.aliases) if(!aliases.count(a.first)) typed_other+=a.first;
+        if(n>=0 && typed_other.size()>2) {
+            for(char c:typed_other) font.aliases.erase(c);
+            skipped+=typed_other;
+            fprintf(stderr,"[headless] learn-font: \"%s\": %zu characters typed as others\n",screen_utf8(text).c_str(),typed_other.size());
+        }
+        if(n<0) {
+            const std::string g=groups[next];
+            fprintf(stderr,"[headless] learn-font: \"%s\": %s\n",screen_utf8(text).c_str(),why.c_str());
+            if(!font.ready()) { *error="learn-font: "+why;return true; }
+            if(g.size()>1) for(size_t k=0;k<g.size();k++) groups.insert(groups.begin()+next+1+k,std::string(1,g[k]));
+            else skipped+=g;
+        }
+        type(o,SCRIPT_TYPES_KEYS ? "{RETURN}" : "\r");
+        next++;phase=0;since=current_frame;
+        return false;
+    }
+};
+
+struct Command { int number; std::string op, arg; };
+struct ScriptRun {
+    std::vector<Command> cmds;
+    std::string dir, error, recorded;
+    size_t pc=0;
+    bool begun=false, stop=false;
+    int start=0, until=0, timeout=3000, stable=0;
+    std::vector<std::string> last_rows;
+    std::list<Paste> pastes;
+    std::vector<std::pair<int,std::string>> typed_lines;   // SCRIPT_TYPES_KEYS: each line's first frame and source
+    size_t typed_next=0;
+    Learn learn;
+    bool active() const { return pc<cmds.size() && error.empty() && !stop; }
+    void load(const std::string &path) {
+        auto data=read_file(path);
+        std::string text(data.begin(),data.end());
+        auto slash=path.find_last_of('/');
+        dir=slash==std::string::npos ? "." : path.substr(0,slash);
+        static const std::set<std::string> ops={"frames","wait","idle","paste","line","type","text","shot","learn-font",
+            "font","errors","timeout","stop","reset","tape","record","eject","prompt","line-gap"};
+        size_t pos=0;int number=0;
+        while(pos<text.size()) {
+            size_t nl=text.find('\n',pos);
+            std::string l=text.substr(pos,nl==std::string::npos ? std::string::npos : nl-pos);
+            pos=nl==std::string::npos ? text.size() : nl+1;number++;
+            if(!l.empty() && l.back()=='\r') l.pop_back();
+            size_t b=l.find_first_not_of(" \t");
+            if(b==std::string::npos || l[b]=='#') continue;
+            size_t e=l.find_first_of(" \t",b);
+            Command c{number,l.substr(b,e==std::string::npos ? std::string::npos : e-b),""};
+            if(e!=std::string::npos) { size_t a=l.find_first_not_of(" \t",e);if(a!=std::string::npos) c.arg=l.substr(a); }
+            if(!ops.count(c.op)) throw std::runtime_error(path+" line "+std::to_string(number)+": unknown command "+c.op);
+            cmds.push_back(c);
+        }
+    }
+    std::string relative(const std::string &p) const { return p[0]=='/' ? p : dir+"/"+p; }
+    void queue_paste(const std::string &text) {
+        pastes.push_back(make_paste(current_frame,text));
+        paste_run.queue.push_back(&pastes.back());
+    }
+    // the command starts; true when it is already finished
+    bool begin(const Command &c,Options &o) {
+        const std::string &a=c.arg;
+        if(c.op=="frames") { until=current_frame+number(a);return false; }
+        if(c.op=="wait" || c.op=="idle" || c.op=="prompt") { need_font();stable=0;last_rows.clear();return false; }
+        if(c.op=="paste" || c.op=="line") {
+            std::string text=a;
+            if(c.op=="paste") { auto d=read_file(relative(a));text.assign(d.begin(),d.end()); }
+            if(!SCRIPT_TYPES_KEYS) { queue_paste(text);return false; }
+            std::vector<std::string> source;
+            auto lines=paste_lines(text,true,&source);
+            typed_lines.clear();typed_next=0;
+            until=current_frame;
+            for(size_t k=0;k<lines.size();k++) {
+                if(lines[k].find('{')!=std::string::npos) throw std::runtime_error("this machine types with keys, which cannot type {");
+                typed_lines.push_back({until,source[k]});
+                until=type_text(o,until,"{WAIT20}"+lines[k]+"{RETURN}{WAIT30}");   // a key right after a prompt can be lost
+            }
+            return false;
+        }
+        if(c.op=="type") { until=type_text(o,current_frame,a);return false; }
+        if(c.op=="text") { write_text(destination(o,a));return true; }
+        if(c.op=="shot") {
+            std::string path=destination(o,a);machine->get_osd()->capture_screen_to(path.c_str());
+            struct stat st;if(stat(path.c_str(),&st) || st.st_size==0) throw std::runtime_error("PNG creation failed");
+            return true;
+        }
+        if(c.op=="learn-font") { font=ScreenFont();learn.start();return false; }
+        if(c.op=="font") { font.load(relative(a));if(screen.w) screen_rows=font.read(screen);return true; }
+        if(c.op=="errors") {
+            error_patterns.clear();
+            for(size_t p=0;p<=a.size();) { size_t bar=a.find('|',p);std::string t=a.substr(p,bar==std::string::npos ? std::string::npos : bar-p);if(!t.empty()) error_patterns.push_back(lower(t));p=bar==std::string::npos ? a.size()+1 : bar+1; }
+            error_rows=error_count(nullptr);   // rows already on the screen are not new
+            return true;
+        }
+        if(c.op=="timeout") { timeout=number(a);return true; }
+        if(c.op=="line-gap") { o.line_gap=number(a);return true; }
+        if(c.op=="stop") { stop=true;return true; }
+        if(c.op=="reset") { machine->reset();fprintf(stderr,"[headless] reset before frame %d\n",current_frame);return true; }
+#ifdef USE_TAPE
+        if(c.op=="tape") {
+            std::string path=absolute(relative(a));
+            machine->play_tape(0,path.c_str());
+            if(!machine->is_tape_inserted(0)) throw std::runtime_error("tape rejected: "+path);
+            fprintf(stderr,"[headless] tape before frame %d: %s\n",current_frame,path.c_str());
+            return true;
+        }
+        if(c.op=="record") {
+            recorded=fresh_destination(o,a);
+            machine->rec_tape(0,recorded.c_str());
+            if(!machine->is_tape_inserted(0)) throw std::runtime_error("cannot record to: "+recorded);
+            fprintf(stderr,"[headless] recording before frame %d: %s\n",current_frame,recorded.c_str());
+            return true;
+        }
+        if(c.op=="eject") { machine->close_tape(0);return true; }
+#else
+        if(c.op=="tape" || c.op=="record" || c.op=="eject") throw std::runtime_error("this machine has no tape drive");
+#endif
+        throw std::runtime_error("unknown command "+c.op);
+    }
+    bool finished(const Command &c,Options &o) {
+        if(c.op=="frames" || c.op=="type") return current_frame>=until;
+        if(c.op=="paste" || c.op=="line") {
+            if(!SCRIPT_TYPES_KEYS) return paste_run.done();
+            // the line being typed, for screen_errors
+            while(typed_next<typed_lines.size() && typed_lines[typed_next].first<=current_frame) {
+                paste_run.typed++;paste_run.last_source=typed_lines[typed_next++].second;
+            }
+            return current_frame>=until;
+        }
+        if(c.op=="wait") {
+            for(auto &r:screen_rows) if(screen_utf8(r).find(c.arg)!=std::string::npos) return true;
+            return false;
+        }
+        if(c.op=="prompt") {
+            // TEXT alone on a row below the last line typed (its first 16 characters, before any wrap)
+#ifdef USE_AUTO_KEY
+            if(machine->is_auto_key_running() || !paste_run.done()) return false;
+#endif
+            std::string anchor=paste_run.last_source.substr(0,16);
+            int below=-1;
+            for(int r=int(screen_rows.size())-1;r>=0 && below<0;r--) if(!anchor.empty() && screen_utf8(screen_rows[r]).find(anchor)!=std::string::npos) below=r;
+            if(below<0) return false;
+            for(size_t r=below+1;r<screen_rows.size();r++) {
+                std::string row=screen_rows[r];
+                while(!row.empty() && (row.back()==UNKNOWN_CHAR || row.back()==' ')) row.pop_back();   // a cursor of its own shape
+                std::string u=screen_utf8(row);
+                size_t b=u.find_first_not_of(' ');
+                if(b!=std::string::npos && u.substr(b)==c.arg) return true;
+            }
+            return false;
+        }
+        if(c.op=="idle") {
+            // screen text unchanged for N frames
+            bool busy=changed_cells(screen_rows,last_rows)>1;
+            last_rows=screen_rows;
+#ifdef USE_AUTO_KEY
+            busy=busy || machine->is_auto_key_running() || !paste_run.done();
+#endif
+            stable=busy ? 0 : stable+1;
+            return stable>=number(c.arg);
+        }
+        if(c.op=="learn-font") {
+            if(!learn.step(o,&error)) return false;
+            if(error.empty()) {
+                font.no_key=learn.skipped;
+                font.save(o.out+"/font.txt");
+                fprintf(stderr,"[headless] learn-font: %dx%d cells from (%d,%d), %d columns x %d rows, %zu glyphs%s%s\n",font.cw,font.ch,font.ox,font.oy,
+                    font.cols(),font.rows(),font.glyphs.size(),font.no_key.empty() ? "" : ", no key for: ",screen_utf8(font.no_key).c_str());
+                screen_rows=font.read(screen);
+            }
+            return true;
+        }
+        return true;
+    }
+    void step(Options &o) {
+        try {
+            while(active()) {
+                const Command &c=cmds[pc];
+                if(!begun) { begun=true;start=current_frame;if(begin(c,o)) { pc++;begun=false;continue; } }
+                if(finished(c,o) && error.empty()) { pc++;begun=false;continue; }
+                if(error.empty() && (c.op=="wait" || c.op=="idle" || c.op=="prompt") && current_frame-start>timeout) error="timed out after "+std::to_string(timeout)+" frames";
+                return;
+            }
+        } catch(const std::exception &e) { error=e.what(); }
+    }
+} script;
 
 void help() {
     fprintf(stdout,"%s headless CLI (see CLI.md)\n"
@@ -477,6 +802,17 @@ void help() {
         "  --trace-from FRAME --trace-to FRAME   inclusive trace window;  --watch-pc ADDR[,ADDR...]\n"
         "  --poke ADDR=BYTES@FRAME  --dump-mem ADDR:LEN@FRAME  --dump-memory FILE   (64 KiB, hex)\n"
         "  --wav FILE                    the mixed sound output (16-bit stereo, the VM's rate)\n"
+        "  --font FILE                   a screen font from learn-font, for reading the screen as text\n"
+        "  --text FRAME (repeatable), --final-text   OUT/text_NNNNNN.txt, the screen as UTF-8 text\n"
+        "Script (--script FILE, one command per line, run in order; the run ends with the script):\n"
+        "  frames N | wait TEXT | idle N | timeout N      run N frames; until TEXT is on screen; until the screen is\n"
+        "                                                 unchanged N frames; wait/idle/prompt fail after N frames (3000)\n"
+        "  prompt TEXT                                    until a row below the line typed last is TEXT (Ok, Ready)\n"
+        "  paste FILE | line TEXT | type KEYS             auto key paste (FILE beside the script); --type key syntax\n"
+        "  line-gap N                                     frames between pasted lines, as --paste-line-gap\n"
+        "  learn-font | font FILE                         learn the screen font (OUT/font.txt) by typing REM lines\n"
+        "  text NAME | shot NAME | errors A|B | reset | stop   NAME in OUT; errors: rows to report as screen_errors\n"
+        "  tape FILE | record NAME | eject                play FILE (beside the script); record to OUT/NAME\n"
         "  --host-time YYYY-MM-DDTHH:MM:SS   clock chips start at this time and follow emulated time\n"
 #ifdef USE_MONITOR_TYPE
         "  --monitor-type N              the machine's Monitor Type menu item (0 = first)\n"
@@ -532,6 +868,10 @@ int retropc_headless(int argc,const char **argv) {
             else if(a=="--screenshot") o.shots.insert(number(next()));
             else if(a=="--dump-every") o.every=number(next());
             else if(a=="--final-screenshot") o.final_shot=true;
+            else if(a=="--script") o.script=next();
+            else if(a=="--font") o.font=next();
+            else if(a=="--text") o.texts.insert(number(next()));
+            else if(a=="--final-text") o.final_text=true;
             else if(a=="--reset-at") o.resets.insert(number(next()));
             else if(a=="--special-reset-at") o.special_resets.insert(number(next()));
             else if(a=="--type") o.types.push_back(timed(next()));
@@ -577,6 +917,10 @@ int retropc_headless(int argc,const char **argv) {
             throw std::runtime_error("require --rom-dir, a new --out directory, a bounded --stop-at-frame and valid timing");
         type_keys(o);
         for(auto f:o.shots) if(f>o.stop) throw std::runtime_error("screenshot after stop");
+        for(auto f:o.texts) if(f>o.stop) throw std::runtime_error("text dump after stop");
+        if(!o.script.empty()) script.load(o.script);
+        if(!o.font.empty()) font.load(o.font);
+        if((!o.texts.empty() || o.final_text) && !font.ready() && o.script.empty()) throw std::runtime_error("--text needs --font");
         for(auto f:o.resets) if(f>o.stop) throw std::runtime_error("reset after stop");
         if(o.tape_at<0 || o.tape_at>o.stop || (o.tape_at>0 && o.tape.empty())) throw std::runtime_error("--tape-at needs --tape and a frame within the run");
         for(auto f:o.special_resets) if(f>o.stop) throw std::runtime_error("reset after stop");
@@ -698,7 +1042,7 @@ int retropc_headless(int argc,const char **argv) {
         if(!o.io.empty()) { io_trace=output(destination(o,o.io));fputs(IO_HEADER,io_trace); }
 #endif
         if(!o.wav.empty()) { wav=output(destination(o,o.wav));wav_header(wav);cli_sound_hook=sound; }
-        if(!o.pastes.empty()) {
+        if(!o.pastes.empty() || !script.cmds.empty()) {
             paste_run.log=output(o.out+"/paste.csv");
             fputs("line,start_frame,end_frame,text\n",paste_run.log);
             for(auto &p:o.pastes) paste_run.queue.push_back(&p);
@@ -753,7 +1097,12 @@ int retropc_headless(int argc,const char **argv) {
 #endif
 
         int stop=o.stop;
+        const bool reading=!script.cmds.empty() || !o.texts.empty() || o.final_text;
         for(current_frame=0;current_frame<=stop;current_frame++) {
+            if(!script.cmds.empty()) {
+                script.step(o);
+                if(!script.active()) stop=std::min(stop,current_frame);   // finished or failed: this frame is the last
+            }
             if(o.resets.count(current_frame)) { machine->reset();fprintf(stderr,"[headless] reset before frame %d\n",current_frame); }
 #ifdef USE_TAPE
             if(!o.tape.empty() && o.tape_at>0 && current_frame==o.tape_at) insert_tape();
@@ -779,6 +1128,14 @@ int retropc_headless(int argc,const char **argv) {
             machine->draw_screen();
             OSD *osd=machine->get_osd();DEVICE *cpu=machine->get_vm()->get_cpu(0);
             fprintf(frames,"%d,%u,%d,%d,%04x,%016llx\n",current_frame,cpu->get_current_clock(),osd->get_frame_width(),osd->get_frame_height(),unsigned(cpu->get_next_pc()),(unsigned long long)rgb_hash(osd));
+            if(reading) {
+                capture_screen();
+                check_errors();
+                if(o.texts.count(current_frame) || (o.final_text && current_frame==stop)) {
+                    char name[64];snprintf(name,sizeof(name),"/text_%06d.txt",current_frame);
+                    write_text(o.out+name);
+                }
+            }
             if(o.shots.count(current_frame) || (o.every && current_frame%o.every==0) || (o.final_shot && current_frame==stop)) {
                 char name[64];snprintf(name,sizeof(name),"/frame_%06d.png",current_frame);
                 std::string path=o.out+name;osd->capture_screen_to(path.c_str());
@@ -797,7 +1154,7 @@ int retropc_headless(int argc,const char **argv) {
             if(fclose(f)) throw std::runtime_error("memory dump write failed");
         }
 #ifdef USE_TAPE
-        if(!o.record.empty()) machine->close_tape(0);
+        if(!o.record.empty() || !script.recorded.empty()) machine->close_tape(0);
 #endif
         if(fclose(frames)) throw std::runtime_error("frame log write failed");
         if(cpu_trace && fclose(cpu_trace)) throw std::runtime_error("CPU trace write failed");cpu_trace=nullptr;
@@ -849,15 +1206,39 @@ int retropc_headless(int argc,const char **argv) {
         for(int drv=0;drv<4;drv++) if(!copies[drv].empty()) disks+=std::string(disks.empty() ? "" : ",")+"\""+char('a'+drv)+"\":{\"path\":"+json_string(copies[drv])+",\"writable\":"+(writable[drv] ? "true" : "false")+"}";
         if(!disks.empty()) field("disks","{"+disks+"}");
         if(!o.record.empty()) field("recorded_tape",json_string(o.record));
+        else if(!script.recorded.empty()) field("recorded_tape",json_string(script.recorded));
         if(!o.pastes.empty()) {
             field("paste","{\"lines\":"+std::to_string(paste_run.total())+",\"lines_typed\":"+std::to_string(paste_run.typed)+
                 ",\"complete\":"+(paste_run.done() ? "true" : "false")+",\"finished_frame\":"+std::to_string(paste_run.finished)+"}");
         }
+        if(font.ready()) {
+            field("screen_font","{\"cell\":["+std::to_string(font.cw)+","+std::to_string(font.ch)+"],\"origin\":["+std::to_string(font.ox)+","+std::to_string(font.oy)+
+                "],\"columns\":"+std::to_string(font.cols())+",\"rows\":"+std::to_string(font.rows())+",\"glyphs\":"+std::to_string(font.glyphs.size())+
+                (font.no_key.empty() ? "" : ",\"no_key\":"+json_string(screen_utf8(font.no_key)))+"}");
+        }
+        if(!script.cmds.empty()) {
+            std::string sc="{\"commands\":"+std::to_string(script.cmds.size())+",\"done\":"+std::to_string(script.pc)+
+                ",\"complete\":"+(script.pc>=script.cmds.size() || script.stop ? "true" : "false");
+            if(script.pc<script.cmds.size() && !script.stop) {
+                const Command &c=script.cmds[script.pc];
+                sc+=",\"line\":"+std::to_string(c.number)+",\"command\":"+json_string(c.op+(c.arg.empty() ? "" : " "+c.arg))+
+                    ",\"error\":"+json_string(script.error.empty() ? "stopped at --stop-at-frame" : script.error);
+            }
+            field("script",sc+"}");
+        }
+        if(!error_patterns.empty()) {
+            std::string e;
+            for(auto &x:screen_errors) e+=std::string(e.empty() ? "" : ",")+"{\"frame\":"+std::to_string(x.frame)+",\"pasted_line\":"+std::to_string(x.line)+
+                ",\"source\":"+json_string(x.source)+",\"screen\":"+json_string(x.screen)+"}";
+            field("screen_errors","["+e+"]");
+        }
         std::string missing;
         for(auto &r:roms_not_found) missing+=(missing.empty() ? "" : ",")+json_string(r);
         field("rom_files_not_found","["+missing+"]");
+        const bool failed=!script.cmds.empty() && script.pc<script.cmds.size() && !script.stop;
+        if(failed) json.replace(json.find("\"complete\""),10,"\"script_failed\"");
         printf("%s}\n",json.c_str());
-        return 0;
+        return failed ? 1 : 0;
     } catch(const std::exception &e) {
         hook(false);
         fprintf(stderr,"[headless] ERROR: %s\n",e.what());

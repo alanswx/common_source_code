@@ -16,7 +16,11 @@ The port adds:
 - A CMake build of all 128 machine targets: `.app` bundles on macOS, plain
   executables on Linux.
 - Headless command-line modes for automated testing and for comparison against
-  MiSTer FPGA cores.
+  MiSTer FPGA cores. The headless mode reads the screen back as text, using a
+  font it learns from each machine's own display, and runs scripts that wait
+  for the BASIC prompt.
+- `tool/typein.py`: types a BASIC listing in, lists it back to check every line,
+  and saves it to a tape or disk image, which it then loads back and checks.
 
 ## Building on macOS
 
@@ -67,7 +71,9 @@ Every machine accepts `--headless`: it runs without a window or audio, with
 an explicit ROM directory and a new output directory. Typing, pasted listings,
 key presses, resets and disk or tape changes are scheduled by frame number.
 Outputs are PNG screenshots, per-frame hashes, traces, memory dumps, saved disk
-and tape images, and a one-line JSON result. See [CLI.md](CLI.md).
+and tape images, and a one-line JSON result. With `--script` the run waits on the
+screen instead of counting frames (`prompt Ok`, `idle 30`), and `text` saves the
+screen as UTF-8 text. See [CLI.md](CLI.md), which also covers `tool/typein.py`.
 
 | Machines | Extra notes |
 | --- | --- |
@@ -78,9 +84,9 @@ and tape images, and a one-line JSON result. See [CLI.md](CLI.md).
 
 ## Roadmap
 
-1. Automated testing of type-in BASIC listings on the shared CLI: wait for the
-   BASIC prompt, read the screen back as text, find the lines BASIC rejected,
-   and save the program as a tape or floppy image.
+1. Type-ins: run `tool/typein.py` over the magazine archive. Remaining gaps:
+   MZ-700 kana, PC-6001 tape loading, more machines' save commands, and DLE
+   (dump list editor) tapes.
 2. Linux: menus or an on-screen panel for media and settings (the window,
    sound, keyboard and paste work).
 3. CI on macOS and Linux.
