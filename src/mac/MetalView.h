@@ -8,7 +8,7 @@
 */
 
 #import <MetalKit/MetalKit.h>
-#include "osd.h"
+#include "../posix/osd.h"
 
 @interface MetalView : MTKView
 

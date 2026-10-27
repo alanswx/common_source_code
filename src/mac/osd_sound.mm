@@ -28,7 +28,7 @@ static volatile int g_ring_write_pos = 0;
 static volatile int g_ring_read_pos = 0;
 static std::mutex g_sound_mutex;
 
-void mac_sound_release();
+void host_sound_release();
 
 static void audio_queue_callback(void *custom_data, AudioQueueRef queue, AudioQueueBufferRef buffer)
 {
@@ -60,12 +60,12 @@ static void audio_queue_callback(void *custom_data, AudioQueueRef queue, AudioQu
 	AudioQueueEnqueueBuffer(queue, buffer, 0, nullptr);
 }
 
-void mac_sound_init(int rate, int samples)
+void host_sound_init(int rate, int samples)
 {
 	std::lock_guard<std::mutex> lock(g_sound_mutex);
 
 	if(g_audio_queue) {
-		mac_sound_release();
+		host_sound_release();
 	}
 
 	g_ring_write_pos = 0;
@@ -105,7 +105,7 @@ void mac_sound_init(int rate, int samples)
 	g_sound_running = true;
 }
 
-void mac_sound_release()
+void host_sound_release()
 {
 	std::lock_guard<std::mutex> lock(g_sound_mutex);
 	if(g_audio_queue) {
@@ -116,7 +116,7 @@ void mac_sound_release()
 	g_sound_running = false;
 }
 
-void mac_sound_write(const uint16_t* buffer, int samples)
+void host_sound_write(const uint16_t* buffer, int samples)
 {
 	if(!g_audio_queue || !buffer || samples <= 0) return;
 
@@ -133,12 +133,12 @@ void mac_sound_write(const uint16_t* buffer, int samples)
 	}
 }
 
-void mac_sound_mute(bool mute)
+void host_sound_mute(bool mute)
 {
 	g_sound_muted = mute;
 }
 
-int mac_sound_get_buffered_samples()
+int host_sound_get_buffered_samples()
 {
 	if(!g_audio_queue || !g_sound_running) return 0;
 	return (g_ring_write_pos - g_ring_read_pos + RING_BUFFER_SAMPLES) % RING_BUFFER_SAMPLES;

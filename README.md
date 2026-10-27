@@ -10,7 +10,8 @@ The port adds:
 
 - A macOS front-end (`src/mac/`): Metal video, CoreAudio sound, menus for disks,
   tapes, Quick Disks and cartridges, ROM alias discovery and a missing-ROM report.
-- A CMake build of all 128 machine targets as `.app` bundles.
+- A CMake build of all 128 machine targets: `.app` bundles on macOS, plain
+  executables on Linux.
 - Headless command-line modes for automated testing and for comparison against
   MiSTer FPGA cores.
 
@@ -28,6 +29,24 @@ there, not in `CMakeLists.txt`.
 
 ROMs are not included. Each app reports the files it is missing at startup and
 looks for them in `~/Library/Application Support/CommonSourceCodeProject/<machine>/`.
+
+## Building on Linux
+
+The Linux build has the headless command line only so far; a window and sound
+(SDL2) come next. It needs CMake, g++ and zlib (`zlib1g-dev` on Ubuntu).
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 16
+build/fm7 --headless --rom-dir ~/roms/fm7 --out /tmp/fm7-run --stop-at-frame 600 --final-screenshot
+```
+
+ROM and media names are matched ignoring case, as on macOS: `fbasic30.rom`
+satisfies `FBASIC30.ROM`. The same command line gives the same frames on both
+systems.
+
+`src/posix/` holds the OSD layer shared by both systems; `src/mac/` and
+`src/linux/` add the host's sound, PNG writer and `main`.
 
 ## Command-line modes
 
@@ -49,8 +68,7 @@ and tape images, and a one-line JSON result. See [CLI.md](CLI.md).
 1. Automated testing of type-in BASIC listings on the shared CLI: wait for the
    BASIC prompt, read the screen back as text, find the lines BASIC rejected,
    and save the program as a tape or floppy image.
-2. A Linux build: a portable OSD core plus an SDL2 front-end, with the headless
-   CLI first.
+2. Linux: an SDL2 window and sound (the headless CLI already builds and runs).
 3. CI on macOS and Linux.
 
 [MISTER_CORE_GAPS.md](MISTER_CORE_GAPS.md) compares the CSCP machines with the

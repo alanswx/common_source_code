@@ -4,11 +4,11 @@
 	Author : Takeda.Toshiya
 	Date   : 2006.08.18 -
 
-	[ macOS dependent ]
+	[ OSD shared by macOS and Linux ]
 */
 
-#ifndef _MAC_OSD_H_
-#define _MAC_OSD_H_
+#ifndef _POSIX_OSD_H_
+#define _POSIX_OSD_H_
 
 #include <stdint.h>
 #include <stdlib.h>

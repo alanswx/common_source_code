@@ -1,18 +1,27 @@
 cmake_minimum_required(VERSION 3.15)
-project(RetroPC LANGUAGES C CXX OBJCXX)
+project(RetroPC LANGUAGES C CXX)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_compile_options(
-    -DOSD_MAC
+    -DOSD_POSIX
     -Wno-deprecated-declarations
-    -Wno-deprecated-register
-    -Wno-non-c-typedef-for-linkage
     -Wno-switch
-    -Wno-array-compare
-    -Wno-c++11-narrowing
 )
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(
+        -Wno-deprecated-register
+        -Wno-non-c-typedef-for-linkage
+        -Wno-array-compare
+        -Wno-c++11-narrowing
+    )
+else()
+    add_compile_options(-Wno-narrowing)
+endif()
 add_compile_options("$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
 
 include_directories(src)
@@ -26,58 +35,76 @@ set(RETROPC_COMMON_SOURCES
     src/debugger.cpp
     src/emu.cpp
     src/cli/headless.cpp
+    src/posix/osd.cpp
 )
 
-set(RETROPC_MAC_SOURCES
-    src/mac/osd.mm
-    src/mac/osd_sound.mm
-    src/mac/MetalView.mm
-    src/mac/mac_logger.mm
-    src/mac/macmain.mm
-)
-
-find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
-find_library(METAL_FRAMEWORK Metal REQUIRED)
-find_library(METALKIT_FRAMEWORK MetalKit REQUIRED)
-find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
-find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
-find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
-
-set(MAC_FRAMEWORKS
-    ${COCOA_FRAMEWORK}
-    ${METAL_FRAMEWORK}
-    ${METALKIT_FRAMEWORK}
-    ${AUDIOTOOLBOX_FRAMEWORK}
-    ${COREGRAPHICS_FRAMEWORK}
-    ${IMAGEIO_FRAMEWORK}
-)
+if(APPLE)
+    set(RETROPC_HOST_SOURCES
+        src/mac/osd_mac.mm
+        src/mac/osd_sound.mm
+        src/mac/MetalView.mm
+        src/mac/mac_logger.mm
+        src/mac/macmain.mm
+    )
+    find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(METALKIT_FRAMEWORK MetalKit REQUIRED)
+    find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+    set(RETROPC_HOST_LIBRARIES
+        ${COCOA_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${METALKIT_FRAMEWORK}
+        ${AUDIOTOOLBOX_FRAMEWORK}
+        ${COREGRAPHICS_FRAMEWORK}
+        ${IMAGEIO_FRAMEWORK}
+    )
+else()
+    # Linux: the headless command line only, for now
+    find_package(ZLIB REQUIRED)
+    find_package(Threads REQUIRED)
+    set(RETROPC_HOST_SOURCES
+        src/linux/osd_linux.cpp
+        src/linux/main.cpp
+    )
+    set(RETROPC_HOST_LIBRARIES ZLIB::ZLIB Threads::Threads)
+endif()
 
 function(add_retropc_app TARGET_NAME DISPLAY_NAME COMPILE_DEFS ICON_FILE)
     set(VM_SOURCES ${ARGN})
-    add_executable(${TARGET_NAME} MACOSX_BUNDLE
-        ${RETROPC_COMMON_SOURCES}
-        ${RETROPC_MAC_SOURCES}
-        ${VM_SOURCES}
-        ${ICON_FILE}
-    )
+    if(APPLE)
+        add_executable(${TARGET_NAME} MACOSX_BUNDLE
+            ${RETROPC_COMMON_SOURCES}
+            ${RETROPC_HOST_SOURCES}
+            ${VM_SOURCES}
+            ${ICON_FILE}
+        )
+        get_filename_component(ICON_NAME ${ICON_FILE} NAME)
+        set_target_properties(${TARGET_NAME} PROPERTIES
+            OUTPUT_NAME "${TARGET_NAME}"
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_BUNDLE_NAME "${DISPLAY_NAME}"
+            MACOSX_BUNDLE_EXECUTABLE_NAME "${TARGET_NAME}"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "jp.coocan.takeda-toshiya.${TARGET_NAME}"
+            MACOSX_BUNDLE_ICON_FILE "${ICON_NAME}"
+            RESOURCE "${ICON_FILE}"
+        )
+        set_source_files_properties(${ICON_FILE} PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources"
+        )
+    else()
+        add_executable(${TARGET_NAME}
+            ${RETROPC_COMMON_SOURCES}
+            ${RETROPC_HOST_SOURCES}
+            ${VM_SOURCES}
+        )
+    endif()
     target_compile_definitions(${TARGET_NAME} PRIVATE
         ${COMPILE_DEFS}
         _WINDOWS
     )
-    target_link_libraries(${TARGET_NAME} PRIVATE ${MAC_FRAMEWORKS})
-    get_filename_component(ICON_NAME ${ICON_FILE} NAME)
-    set_target_properties(${TARGET_NAME} PROPERTIES
-        OUTPUT_NAME "${TARGET_NAME}"
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "${DISPLAY_NAME}"
-        MACOSX_BUNDLE_EXECUTABLE_NAME "${TARGET_NAME}"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "jp.coocan.takeda-toshiya.${TARGET_NAME}"
-        MACOSX_BUNDLE_ICON_FILE "${ICON_NAME}"
-        RESOURCE "${ICON_FILE}"
-    )
-    set_source_files_properties(${ICON_FILE} PROPERTIES
-        MACOSX_PACKAGE_LOCATION "Resources"
-    )
+    target_link_libraries(${TARGET_NAME} PRIVATE ${RETROPC_HOST_LIBRARIES})
 endfunction()
 
 # Target: mz80k

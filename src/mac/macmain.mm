@@ -13,7 +13,7 @@
 #include <thread>
 #include <atomic>
 
-#include "osd.h"
+#include "../posix/osd.h"
 #include "mac_logger.h"
 #include "../cli/headless.h"
 #include "../emu.h"

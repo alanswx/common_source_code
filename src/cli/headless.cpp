@@ -26,6 +26,8 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <dirent.h>
+#include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -54,6 +56,7 @@ std::map<uint16_t,unsigned long> watch;
 std::string rom_dir_prefix;
 std::string x1_kanji_rom;	// CLI_X1: the kanji font file found, or empty
 std::set<std::string> roms_not_found;
+time_t host_time_start = -1;	// --host-time, as UTC seconds
 #ifdef USE_FLOPPY_DISK
 const int DRIVES = USE_FLOPPY_DISK;
 #else
@@ -98,6 +101,16 @@ long file_size(const std::string &path) {
     struct stat st;
     if(stat(path.c_str(),&st) || !S_ISREG(st.st_mode)) return -1;
     return long(st.st_size);
+}
+// size of NAME in DIR, matching the name ignoring case as the VM's file opens do (case-sensitive file systems)
+long rom_file_size(const std::string &dir,const std::string &name) {
+    long size=file_size(dir+"/"+name);
+    if(size>=0) return size;
+    DIR *d=opendir(dir.c_str());
+    if(!d) return -1;
+    while(struct dirent *e=readdir(d)) if(!strcasecmp(e->d_name,name.c_str())) { size=file_size(dir+"/"+e->d_name);break; }
+    closedir(d);
+    return size;
 }
 std::string extension(const std::string &path) {
     auto dot=path.find_last_of('.'), slash=path.find_last_of('/');
@@ -180,6 +193,24 @@ unsigned opcode_at(DEVICE *cpu,uint16_t pc) {
 #else
     return 0;
 #endif
+}
+// --host-time: the RTC chips read the given start time plus the emulated time, so runs do not depend on the clock
+void fixed_host_time(cur_time_t *t) {
+    time_t now=host_time_start+(current_frame ? time_t(current_frame/machine->get_frame_rate()) : 0);   // frame 0 includes the EMU constructor
+    struct tm tm;gmtime_r(&now,&tm);
+    t->year=tm.tm_year+1900;t->month=tm.tm_mon+1;t->day=tm.tm_mday;t->day_of_week=tm.tm_wday;
+    t->hour=tm.tm_hour;t->minute=tm.tm_min;t->second=tm.tm_sec;
+}
+time_t parse_host_time(const std::string &s) {
+    struct tm tm={};char sep=0,extra=0;
+    int n=sscanf(s.c_str(),"%4d-%2d-%2d%c%2d:%2d:%2d%c",&tm.tm_year,&tm.tm_mon,&tm.tm_mday,&sep,&tm.tm_hour,&tm.tm_min,&tm.tm_sec,&extra);
+    if(!(n==3 || (n==7 && (sep=='T' || sep==' ')))) throw std::runtime_error("--host-time wants YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS: "+s);
+    struct tm want=tm;
+    tm.tm_year-=1900;tm.tm_mon-=1;
+    time_t t=timegm(&tm);
+    if(t==-1 || tm.tm_year+1900!=want.tm_year || tm.tm_mon+1!=want.tm_mon || tm.tm_mday!=want.tm_mday || tm.tm_hour!=want.tm_hour
+       || tm.tm_min!=want.tm_min || tm.tm_sec!=want.tm_sec) throw std::runtime_error("--host-time out of range: "+s);
+    return t;
 }
 bool tracing() { return current_frame>=trace_from && current_frame<=trace_to; }
 void count_watch(uint16_t pc) { if(!watch.empty()) { auto it=watch.find(pc);if(it!=watch.end()) it->second++; } }
@@ -515,6 +546,7 @@ void help() {
         "  --trace-from FRAME --trace-to FRAME   inclusive trace window;  --watch-pc ADDR[,ADDR...]\n"
         "  --poke ADDR=BYTES@FRAME  --dump-mem ADDR:LEN@FRAME  --dump-memory FILE   (64 KiB, hex)\n"
         "  --wav FILE                    the mixed sound output (16-bit stereo, the VM's rate)\n"
+        "  --host-time YYYY-MM-DDTHH:MM:SS   clock chips start at this time and follow emulated time\n"
 #ifdef USE_MONITOR_TYPE
         "  --monitor-type N              the machine's Monitor Type menu item (0 = first)\n"
 #endif
@@ -604,6 +636,7 @@ int retropc_headless(int argc,const char **argv) {
             else if(a=="--trace-from") trace_from=number(next());
             else if(a=="--trace-to") trace_to=number(next());
             else if(a=="--wav") o.wav=next();
+            else if(a=="--host-time") host_time_start=parse_host_time(next());
 #ifdef USE_MONITOR_TYPE
             else if(a=="--monitor-type") { o.monitor_type=number(next());if(o.monitor_type>=USE_MONITOR_TYPE) throw std::runtime_error("--monitor-type out of range"); }
 #endif
@@ -647,14 +680,14 @@ int retropc_headless(int argc,const char **argv) {
         o.rom_dir=absolute(o.rom_dir);
         if(o.rom_dir.size()+2>=_MAX_PATH) throw std::runtime_error("ROM path too long");
         auto need=[&](const char *name,long size) {
-            if(file_size(o.rom_dir+"/"+name)!=size)
+            if(rom_file_size(o.rom_dir,name)!=size)
                 throw std::runtime_error(std::string("required: ")+name+" ("+std::to_string(size)+" bytes) in "+o.rom_dir);
         };
 #if defined(CLI_X1)
         // the names display.cpp/memory.cpp try, in their order; the first present one must have the right size
         auto need_any=[&](std::initializer_list<const char*> names,long size,bool optional) -> std::string {
             for(const char *n:names) {
-                long sz=file_size(o.rom_dir+"/"+n);
+                long sz=rom_file_size(o.rom_dir,n);
                 if(sz<0) continue;
                 if(sz!=size) throw std::runtime_error(std::string("wrong size: ")+n+" ("+std::to_string(size)+" bytes expected) in "+o.rom_dir);
                 return n;
@@ -668,7 +701,7 @@ int retropc_headless(int argc,const char **argv) {
         need_any({"ANK16.ROM","FNT0816.X1"},4096,false);
         x1_kanji_rom=need_any({"KANJI.ROM","FNT1616.X1"},306176,true);
 #elif defined(_SMC777)
-        if(file_size(o.rom_dir+"/SMCROM.DAT")!=16384 && file_size(o.rom_dir+"/SMC777ROM.DAT")!=16384)
+        if(rom_file_size(o.rom_dir,"SMCROM.DAT")!=16384 && rom_file_size(o.rom_dir,"SMC777ROM.DAT")!=16384)
             throw std::runtime_error("required: SMCROM.DAT or SMC777ROM.DAT (16384 bytes) in "+o.rom_dir);
 #elif defined(CLI_BMJR)
         need("BASIC.ROM",12288);need("MONITOR.ROM",4096);need("FONT.ROM",2048);
@@ -754,6 +787,7 @@ int retropc_headless(int argc,const char **argv) {
         if(o.monitor_type>=0) config.monitor_type=o.monitor_type;
 #endif
         fileio_read_miss_hook=rom_miss;
+        if(host_time_start>=0) get_host_time_hook=fixed_host_time;
         emu.reset(new EMU());machine=emu.get();
         hook(true);
         if(cpu_trace && !z80_trace_hook && !mc6800_trace_hook) throw std::runtime_error("--trace-cpu: no trace hook");
@@ -858,10 +892,10 @@ int retropc_headless(int argc,const char **argv) {
 #else
         field("resets",std::to_string(o.resets.size()+o.special_resets.size()));
 #if defined(CLI_SMC777)
-        field("kanji_rom",file_size(o.rom_dir+"/KANJIROM.DAT")>0 ? "true" : "false");
+        field("kanji_rom",rom_file_size(o.rom_dir,"KANJIROM.DAT")>0 ? "true" : "false");
         field("disks_writable",any_writable ? "true" : "false");
 #elif defined(CLI_BMJR)
-        field("printer_rom",file_size(o.rom_dir+"/PRINTER.ROM")==2048 ? "true" : "false");
+        field("printer_rom",rom_file_size(o.rom_dir,"PRINTER.ROM")==2048 ? "true" : "false");
         field("tape",o.tape.empty() ? "false" : "true");
 #endif
 #endif

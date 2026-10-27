@@ -263,6 +263,36 @@ static FILE* mac_fallback_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _T
 }
 #endif
 
+#if !defined(_WIN32) && !defined(__APPLE__)
+#include <dirent.h>
+#include <strings.h>
+#include <string>
+// Case-sensitive file systems: ROM and media names in the VMs are written in one case (FONT.ROM), the
+// files on disk may be in another (font.rom). Find the file name in its directory ignoring case.
+static FILE* nocase_fopen(const _TCHAR* file_path, const _TCHAR* fmode, _TCHAR* resolved_path)
+{
+	const char *slash = strrchr(file_path, '/');
+	std::string dir = slash ? std::string(file_path, slash - file_path + 1) : std::string("./");
+	const char *name = slash ? slash + 1 : file_path;
+	if(!*name) return NULL;
+	DIR *d = opendir(dir.c_str());
+	if(!d) return NULL;
+	std::string found;
+	struct dirent *e;
+	while((e = readdir(d)) != NULL) {
+		if(strcasecmp(e->d_name, name) == 0) {
+			found = dir + e->d_name;
+			break;
+		}
+	}
+	closedir(d);
+	if(found.empty()) return NULL;
+	FILE *f = fopen(found.c_str(), fmode);
+	if(f && resolved_path) my_tcscpy_s(resolved_path, _MAX_PATH, found.c_str());
+	return f;
+}
+#endif
+
 bool FILEIO::IsFileExisting(const _TCHAR *file_path)
 {
 #if defined(_USE_QT) || defined(_USE_SDL)
@@ -282,11 +312,13 @@ bool FILEIO::IsFileExisting(const _TCHAR *file_path)
 	if(_taccess(file_path, 0) == 0) return true;
 #if defined(__APPLE__)
 	FILE *f = mac_fallback_fopen(file_path, _T("rb"), NULL);
+#else
+	FILE *f = nocase_fopen(file_path, _T("rb"), NULL);
+#endif
 	if(f != NULL) {
 		fclose(f);
 		return true;
 	}
-#endif
 	return false;
 #endif
 }
@@ -352,6 +384,8 @@ bool FILEIO::Fopen(const _TCHAR *file_path, int mode)
 		if((fp = _tfopen(file_path, _T("rb"))) != NULL) return true;
 #if defined(__APPLE__)
 		if((fp = mac_fallback_fopen(file_path, _T("rb"), path)) != NULL) return true;
+#elif !defined(_WIN32)
+		if((fp = nocase_fopen(file_path, _T("rb"), path)) != NULL) return true;
 #endif
 		if(fileio_read_miss_hook) fileio_read_miss_hook(file_path);
 		return false;
@@ -365,6 +399,8 @@ bool FILEIO::Fopen(const _TCHAR *file_path, int mode)
 		if((fp = _tfopen(file_path, _T("r"))) != NULL) return true;
 #if defined(__APPLE__)
 		if((fp = mac_fallback_fopen(file_path, _T("r"), path)) != NULL) return true;
+#elif !defined(_WIN32)
+		if((fp = nocase_fopen(file_path, _T("r"), path)) != NULL) return true;
 #endif
 		return false;
 	case FILEIO_WRITE_ASCII:

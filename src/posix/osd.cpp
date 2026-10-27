@@ -4,7 +4,10 @@
 	Author : Takeda.Toshiya
 	Date   : 2006.08.18 -
 
-	[ macOS dependent OSD implementation ]
+	[ OSD shared by macOS and Linux ]
+
+	The host files supply sound (host_sound_*) and PNG output (OSD::write_bitmap_to_file):
+	src/mac/osd_sound.mm and osd_mac.mm, src/linux/osd_linux.cpp.
 */
 
 #include "osd.h"
@@ -13,15 +16,12 @@
 #include <thread>
 #include <iostream>
 #include <unistd.h>
-#import <Foundation/Foundation.h>
-#import <CoreGraphics/CoreGraphics.h>
-#import <ImageIO/ImageIO.h>
 
-extern void mac_sound_init(int rate, int samples);
-extern void mac_sound_release();
-extern void mac_sound_write(const uint16_t* buffer, int samples);
-extern void mac_sound_mute(bool mute);
-extern int mac_sound_get_buffered_samples();
+extern void host_sound_init(int rate, int samples);
+extern void host_sound_release();
+extern void host_sound_write(const uint16_t* buffer, int samples);
+extern void host_sound_mute(bool mute);
+extern int host_sound_get_buffered_samples();
 
 OSD::OSD()
 {
@@ -98,14 +98,14 @@ void OSD::initialize(int rate, int samples)
 	sound_samples = samples;
 
 	allocate_screen_buffer(&vm_screen_buffer, vm_screen_width, vm_screen_height);
-	if(!getenv("RETROPC_CLI_DATA_DIR")) mac_sound_init(sound_rate, sound_samples);
+	if(!getenv("RETROPC_CLI_DATA_DIR")) host_sound_init(sound_rate, sound_samples);
 	sound_available = true;
 	sound_started = true;
 }
 
 void OSD::release()
 {
-	mac_sound_release();
+	host_sound_release();
 	sound_available = false;
 	sound_started = false;
 	release_screen_buffer(&vm_screen_buffer);
@@ -252,41 +252,6 @@ void OSD::capture_screen()
 	write_bitmap_to_file(&vm_screen_buffer, path);
 }
 
-void OSD::write_bitmap_to_file(bitmap_t *bitmap, const _TCHAR *file_path)
-{
-	if(!bitmap || !bitmap->lpBmp || bitmap->width <= 0 || bitmap->height <= 0) return;
-
-	@autoreleasepool {
-		CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
-		CGContextRef context = CGBitmapContextCreate(
-			bitmap->lpBmp,
-			bitmap->width,
-			bitmap->height,
-			8,
-			bitmap->width * 4,
-			colorSpace,
-			kCGImageAlphaNoneSkipFirst | kCGBitmapByteOrder32Little
-		);
-
-		if(context) {
-			CGImageRef image = CGBitmapContextCreateImage(context);
-			if(image) {
-				NSString *nsPath = [NSString stringWithUTF8String:file_path];
-				NSURL *url = [NSURL fileURLWithPath:nsPath];
-				CGImageDestinationRef dest = CGImageDestinationCreateWithURL((__bridge CFURLRef)url, CFSTR("public.png"), 1, nullptr);
-				if(dest) {
-					CGImageDestinationAddImage(dest, image, nullptr);
-					CGImageDestinationFinalize(dest);
-					CFRelease(dest);
-				}
-				CGImageRelease(image);
-			}
-			CGContextRelease(context);
-		}
-		CGColorSpaceRelease(colorSpace);
-	}
-}
-
 // ----------------------------------------------------------------------------
 // Sound
 // ----------------------------------------------------------------------------
@@ -300,7 +265,7 @@ void OSD::update_sound(int* extra_frames)
 			uint16_t* buffer = vm->create_sound(extra_frames);
 			if(buffer && cli_sound_hook) cli_sound_hook(buffer, sound_samples, sound_rate);	// headless --wav
 			if(buffer && !sound_muted && !getenv("RETROPC_CLI_DATA_DIR")) {
-				mac_sound_write(buffer, sound_samples);
+				host_sound_write(buffer, sound_samples);
 			}
 		}
 	}
@@ -309,12 +274,12 @@ void OSD::update_sound(int* extra_frames)
 void OSD::mute_sound()
 {
 	sound_muted = true;
-	mac_sound_mute(true);
+	host_sound_mute(true);
 }
 
 void OSD::stop_sound()
 {
-	mac_sound_mute(true);
+	host_sound_mute(true);
 }
 
 // ----------------------------------------------------------------------------

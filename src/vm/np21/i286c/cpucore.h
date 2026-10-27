@@ -88,6 +88,10 @@ extern DEBUGGER 	*device_debugger;
 	#define TRACEOUT(a)
 #endif
 
+// GCC knows __fastcall only on 32-bit x86 (clang accepts and ignores it)
+#if defined(__GNUC__) && !defined(__clang__) && !defined(__i386__) && !defined(__fastcall)
+#define	__fastcall
+#endif
 #define	PARTSCALL	__fastcall
 #define	CPUCALL		__fastcall
 #define	MEMCALL		__fastcall

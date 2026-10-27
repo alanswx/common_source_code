@@ -255,92 +255,121 @@ def get_target_sources(target_name):
     vm_sources = [s for s in sources if 'src/vm/' in s and os.path.exists(s)]
     return vm_sources
 
+CMAKE_PREAMBLE = r"""cmake_minimum_required(VERSION 3.15)
+project(RetroPC LANGUAGES C CXX)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+add_compile_options(
+    -DOSD_POSIX
+    -Wno-deprecated-declarations
+    -Wno-switch
+)
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    add_compile_options(
+        -Wno-deprecated-register
+        -Wno-non-c-typedef-for-linkage
+        -Wno-array-compare
+        -Wno-c++11-narrowing
+    )
+else()
+    add_compile_options(-Wno-narrowing)
+endif()
+add_compile_options("$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")
+
+include_directories(src)
+include_directories(src/res)
+
+set(RETROPC_COMMON_SOURCES
+    src/common.cpp
+    src/config.cpp
+    src/fileio.cpp
+    src/fifo.cpp
+    src/debugger.cpp
+    src/emu.cpp
+    src/cli/headless.cpp
+    src/posix/osd.cpp
+)
+
+if(APPLE)
+    set(RETROPC_HOST_SOURCES
+        src/mac/osd_mac.mm
+        src/mac/osd_sound.mm
+        src/mac/MetalView.mm
+        src/mac/mac_logger.mm
+        src/mac/macmain.mm
+    )
+    find_library(COCOA_FRAMEWORK Cocoa REQUIRED)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(METALKIT_FRAMEWORK MetalKit REQUIRED)
+    find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)
+    find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)
+    find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)
+    set(RETROPC_HOST_LIBRARIES
+        ${COCOA_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${METALKIT_FRAMEWORK}
+        ${AUDIOTOOLBOX_FRAMEWORK}
+        ${COREGRAPHICS_FRAMEWORK}
+        ${IMAGEIO_FRAMEWORK}
+    )
+else()
+    # Linux: the headless command line only, for now
+    find_package(ZLIB REQUIRED)
+    find_package(Threads REQUIRED)
+    set(RETROPC_HOST_SOURCES
+        src/linux/osd_linux.cpp
+        src/linux/main.cpp
+    )
+    set(RETROPC_HOST_LIBRARIES ZLIB::ZLIB Threads::Threads)
+endif()
+
+function(add_retropc_app TARGET_NAME DISPLAY_NAME COMPILE_DEFS ICON_FILE)
+    set(VM_SOURCES ${ARGN})
+    if(APPLE)
+        add_executable(${TARGET_NAME} MACOSX_BUNDLE
+            ${RETROPC_COMMON_SOURCES}
+            ${RETROPC_HOST_SOURCES}
+            ${VM_SOURCES}
+            ${ICON_FILE}
+        )
+        get_filename_component(ICON_NAME ${ICON_FILE} NAME)
+        set_target_properties(${TARGET_NAME} PROPERTIES
+            OUTPUT_NAME "${TARGET_NAME}"
+            MACOSX_BUNDLE TRUE
+            MACOSX_BUNDLE_BUNDLE_NAME "${DISPLAY_NAME}"
+            MACOSX_BUNDLE_EXECUTABLE_NAME "${TARGET_NAME}"
+            MACOSX_BUNDLE_GUI_IDENTIFIER "jp.coocan.takeda-toshiya.${TARGET_NAME}"
+            MACOSX_BUNDLE_ICON_FILE "${ICON_NAME}"
+            RESOURCE "${ICON_FILE}"
+        )
+        set_source_files_properties(${ICON_FILE} PROPERTIES
+            MACOSX_PACKAGE_LOCATION "Resources"
+        )
+    else()
+        add_executable(${TARGET_NAME}
+            ${RETROPC_COMMON_SOURCES}
+            ${RETROPC_HOST_SOURCES}
+            ${VM_SOURCES}
+        )
+    endif()
+    target_compile_definitions(${TARGET_NAME} PRIVATE
+        ${COMPILE_DEFS}
+        _WINDOWS
+    )
+    target_link_libraries(${TARGET_NAME} PRIVATE ${RETROPC_HOST_LIBRARIES})
+endfunction()
+"""
+
 def generate_cmake():
-    generate_icons(TARGETS)
-    
-    out = []
-    out.append("cmake_minimum_required(VERSION 3.15)")
-    out.append("project(RetroPC LANGUAGES C CXX OBJCXX)")
-    out.append("")
-    out.append("set(CMAKE_CXX_STANDARD 14)")
-    out.append("set(CMAKE_CXX_STANDARD_REQUIRED ON)")
-    out.append("")
-    out.append("add_compile_options(")
-    out.append("    -DOSD_MAC")
-    out.append("    -Wno-deprecated-declarations")
-    out.append("    -Wno-deprecated-register")
-    out.append("    -Wno-non-c-typedef-for-linkage")
-    out.append("    -Wno-switch")
-    out.append("    -Wno-array-compare")
-    out.append("    -Wno-c++11-narrowing")
-    out.append(")")
-    out.append('add_compile_options("$<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>")')
-    out.append("")
-    out.append("include_directories(src)")
-    out.append("include_directories(src/res)")
-    out.append("")
-    out.append("set(RETROPC_COMMON_SOURCES")
-    out.append("    src/common.cpp")
-    out.append("    src/config.cpp")
-    out.append("    src/fileio.cpp")
-    out.append("    src/fifo.cpp")
-    out.append("    src/debugger.cpp")
-    out.append("    src/emu.cpp")
-    out.append("    src/cli/headless.cpp")
-    out.append(")")
-    out.append("")
-    out.append("set(RETROPC_MAC_SOURCES")
-    out.append("    src/mac/osd.mm")
-    out.append("    src/mac/osd_sound.mm")
-    out.append("    src/mac/MetalView.mm")
-    out.append("    src/mac/mac_logger.mm")
-    out.append("    src/mac/macmain.mm")
-    out.append(")")
-    out.append("")
-    out.append("find_library(COCOA_FRAMEWORK Cocoa REQUIRED)")
-    out.append("find_library(METAL_FRAMEWORK Metal REQUIRED)")
-    out.append("find_library(METALKIT_FRAMEWORK MetalKit REQUIRED)")
-    out.append("find_library(AUDIOTOOLBOX_FRAMEWORK AudioToolbox REQUIRED)")
-    out.append("find_library(COREGRAPHICS_FRAMEWORK CoreGraphics REQUIRED)")
-    out.append("find_library(IMAGEIO_FRAMEWORK ImageIO REQUIRED)")
-    out.append("")
-    out.append("set(MAC_FRAMEWORKS")
-    out.append("    ${COCOA_FRAMEWORK}")
-    out.append("    ${METAL_FRAMEWORK}")
-    out.append("    ${METALKIT_FRAMEWORK}")
-    out.append("    ${AUDIOTOOLBOX_FRAMEWORK}")
-    out.append("    ${COREGRAPHICS_FRAMEWORK}")
-    out.append("    ${IMAGEIO_FRAMEWORK}")
-    out.append(")")
-    out.append("")
-    out.append("function(add_retropc_app TARGET_NAME DISPLAY_NAME COMPILE_DEFS ICON_FILE)")
-    out.append("    set(VM_SOURCES ${ARGN})")
-    out.append("    add_executable(${TARGET_NAME} MACOSX_BUNDLE")
-    out.append("        ${RETROPC_COMMON_SOURCES}")
-    out.append("        ${RETROPC_MAC_SOURCES}")
-    out.append("        ${VM_SOURCES}")
-    out.append("        ${ICON_FILE}")
-    out.append("    )")
-    out.append("    target_compile_definitions(${TARGET_NAME} PRIVATE")
-    out.append("        ${COMPILE_DEFS}")
-    out.append("        _WINDOWS")
-    out.append("    )")
-    out.append("    target_link_libraries(${TARGET_NAME} PRIVATE ${MAC_FRAMEWORKS})")
-    out.append("    get_filename_component(ICON_NAME ${ICON_FILE} NAME)")
-    out.append("    set_target_properties(${TARGET_NAME} PROPERTIES")
-    out.append('        OUTPUT_NAME "${TARGET_NAME}"')
-    out.append("        MACOSX_BUNDLE TRUE")
-    out.append('        MACOSX_BUNDLE_BUNDLE_NAME "${DISPLAY_NAME}"')
-    out.append('        MACOSX_BUNDLE_EXECUTABLE_NAME "${TARGET_NAME}"')
-    out.append('        MACOSX_BUNDLE_GUI_IDENTIFIER "jp.coocan.takeda-toshiya.${TARGET_NAME}"')
-    out.append('        MACOSX_BUNDLE_ICON_FILE "${ICON_NAME}"')
-    out.append('        RESOURCE "${ICON_FILE}"')
-    out.append("    )")
-    out.append("    set_source_files_properties(${ICON_FILE} PROPERTIES")
-    out.append('        MACOSX_PACKAGE_LOCATION "Resources"')
-    out.append("    )")
-    out.append("endfunction()")
-    out.append("")
+    if shutil.which('sips') and shutil.which('iconutil'):
+        generate_icons(TARGETS)
+
+    out = [CMAKE_PREAMBLE]
 
     for t in TARGETS:
         display_name = DISPLAY_NAMES.get(t, t.upper())

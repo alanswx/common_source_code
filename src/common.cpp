@@ -33,10 +33,12 @@
 	#include <algorithm>
 	#include <cctype>
 	#include <wchar.h>
+	#include <limits.h>
+	#include <stdlib.h>
+	#include <sys/stat.h>
+	#include <unistd.h>
 	#if defined(__APPLE__)
 		#include <mach-o/dyld.h>
-		#include <sys/stat.h>
-		#include <unistd.h>
 	#endif
 #endif
 #include <math.h>
@@ -1043,35 +1045,34 @@ const _TCHAR *DLL_PREFIX get_application_path()
 		std::string cpath = csppath + my_procname + delim;
 		_my_mkdir(cpath);
 		strncpy(app_path, cpath.c_str(), _MAX_PATH - 1);
-#elif defined(__APPLE__)
-        const char *cli_dir=getenv("RETROPC_CLI_DATA_DIR");
-        if(cli_dir && *cli_dir) {
-            my_tcscpy_s(app_path,_MAX_PATH,cli_dir);
-            size_t n=strlen(app_path);if(n && app_path[n-1]!='/') { app_path[n]='/';app_path[n+1]=0; }
-        } else {
-		uint32_t size = sizeof(app_path);
-		if(_NSGetExecutablePath(app_path, &size) == 0) {
-			char real_path[_MAX_PATH];
-			if(realpath(app_path, real_path) != NULL) {
-				char *last_slash = strrchr(real_path, '/');
-				if(last_slash != NULL) {
-					*(last_slash + 1) = '\0';
-					my_tcscpy_s(app_path, _MAX_PATH, real_path);
-				}
-			}
-		} else {
-			my_tcscpy_s(app_path, _MAX_PATH, "./");
-		}
-        }
 #else
-		if(getcwd(app_path, _MAX_PATH) != NULL) {
-			size_t len = strlen(app_path);
-			if(len > 0 && app_path[len - 1] != '/') {
-				app_path[len] = '/';
-				app_path[len + 1] = '\0';
+		// the headless CLI points this at its explicit ROM directory
+		const char *cli_dir = getenv("RETROPC_CLI_DATA_DIR");
+		if(cli_dir && *cli_dir) {
+			my_tcscpy_s(app_path, _MAX_PATH, cli_dir);
+			size_t n = strlen(app_path);
+			if(n && app_path[n - 1] != '/') {
+				app_path[n] = '/';
+				app_path[n + 1] = '\0';
 			}
 		} else {
-			my_tcscpy_s(app_path, _MAX_PATH, "./");
+			// the executable's directory
+			char exe_path[_MAX_PATH], real_path[_MAX_PATH];
+#if defined(__APPLE__)
+			uint32_t size = sizeof(exe_path);
+			bool found = (_NSGetExecutablePath(exe_path, &size) == 0);
+#else
+			ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+			bool found = (len > 0);
+			if(found) exe_path[len] = '\0';
+#endif
+			char *last_slash;
+			if(found && realpath(exe_path, real_path) != NULL && (last_slash = strrchr(real_path, '/')) != NULL) {
+				*(last_slash + 1) = '\0';
+				my_tcscpy_s(app_path, _MAX_PATH, real_path);
+			} else {
+				my_tcscpy_s(app_path, _MAX_PATH, "./");
+			}
 		}
 #endif
 		initialized = true;
@@ -1506,8 +1507,14 @@ int32_t DLL_PREFIX apply_volume(int32_t sample, int volume)
 	return output;
 }
 
+void (*get_host_time_hook)(cur_time_t* cur_time) = NULL;
+
 void DLL_PREFIX get_host_time(cur_time_t* cur_time)
 {
+	if(get_host_time_hook) {
+		get_host_time_hook(cur_time);
+		return;
+	}
 #ifdef _WIN32
 	SYSTEMTIME sTime;
 	GetLocalTime(&sTime);

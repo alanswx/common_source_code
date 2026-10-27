@@ -198,7 +198,7 @@ void MC6809_BASE::initialize()
 	cycles_tmp_count = 0;
 	insns_count = 0;
 
-#if defined(_MSC_VER) || defined(__APPLE__)
+#if defined(_MSC_VER) || defined(__APPLE__) || defined(__linux__)
 	#ifdef USE_DEBUGGER
 		__USE_DEBUGGER = true;
 	#else

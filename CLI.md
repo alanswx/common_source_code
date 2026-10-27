@@ -2,7 +2,8 @@
 
 Every machine's executable accepts `--headless`. It runs the VM at full speed with no window or host audio. Actions
 are scheduled by frame number, and the results are written to a new output directory. The code is
-`src/cli/headless.cpp`. It is plain C++, so the Linux build can use the same front end.
+`src/cli/headless.cpp`, shared by the macOS and Linux builds. On Linux the executable is `build/<machine>`; the same
+command line produces the same frames, traces and JSON on both systems.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -55,6 +56,7 @@ original CLIs.
 | `--poke ADDR=BYTES@FRAME`, `--dump-mem ADDR:LEN@FRAME`, `--dump-memory FILE` | 64 KiB through the CPU's debugger view (hex) |
 | `--wav FILE` | The mixed sound output |
 | `--monitor-type N` | The machine's Monitor Type menu item, 0 = first (machines with that menu) |
+| `--host-time YYYY-MM-DDTHH:MM:SS` | Clock chips read this time plus the emulated time instead of the host clock, so runs are reproducible (`TIME$`, and the PC-8001's calendar bit on port 40h) |
 
 `OUT/frames.csv` has one row per frame: frame, emulator clock, width, height, next PC and an FNV-1a-64 hash of
 the RGB picture.
