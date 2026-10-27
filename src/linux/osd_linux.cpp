@@ -4,20 +4,13 @@
 	Author : Takeda.Toshiya
 	Date   : 2006.08.18 -
 
-	[ Linux dependent OSD: PNG output, sound ]
+	[ Linux dependent OSD: PNG output ]
 */
 
 #include "../posix/osd.h"
 #include <stdio.h>
 #include <vector>
 #include <zlib.h>
-
-// No host audio yet: the headless front end takes the mixed sound through cli_sound_hook.
-void host_sound_init(int rate, int samples) {}
-void host_sound_release() {}
-void host_sound_write(const uint16_t* buffer, int samples) {}
-void host_sound_mute(bool mute) {}
-int host_sound_get_buffered_samples() { return 0; }
 
 static void put_be32(std::vector<uint8_t> &v, uint32_t n)
 {

@@ -16,6 +16,7 @@
 #include "../posix/osd.h"
 #include "mac_logger.h"
 #include "../cli/headless.h"
+#include "../cli/paste.h"
 #include "../emu.h"
 #include "../config.h"
 #include "../res/resource.h"
@@ -24,6 +25,7 @@
 static EMU* g_emu = nullptr;
 static std::atomic<bool> g_emu_running(false);
 static std::thread g_emu_thread;
+static PasteFeeder g_paste;	// Paste Clipboard: one line at a time through auto key
 
 // ---------------------------------------------------------------------------------------------------------
 // Scripted mode (for comparing with the SharpMZ MiSTer core and its simulation; options like mz800emu's
@@ -274,6 +276,26 @@ static uint64_t get_time_ms()
 	}
 
 	script_parse(arguments);
+
+	// --paste FILE [--paste-delay SECONDS]: type a UTF-8 file as Paste Clipboard would, once the machine has started
+	NSUInteger paste_at = [arguments indexOfObject:@"--paste"];
+	if(paste_at != NSNotFound && paste_at + 1 < arguments.count) {
+		NSString *file = arguments[paste_at + 1];
+		NSUInteger delay_at = [arguments indexOfObject:@"--paste-delay"];
+		double delay = (delay_at != NSNotFound && delay_at + 1 < arguments.count) ? [arguments[delay_at + 1] doubleValue] : 5.0;
+		dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+			NSString *text = [NSString stringWithContentsOfFile:file encoding:NSUTF8StringEncoding error:nil];
+			if(!text) {
+				mac_log("[PASTE] cannot read %s", [file UTF8String]);
+				return;
+			}
+			std::vector<std::string> lines = paste_lines([text UTF8String], false);
+			g_emu->get_osd()->lock_vm();
+			g_paste.start(lines);
+			g_emu->get_osd()->unlock_vm();
+			mac_log("[PASTE] %d lines", (int)lines.size());
+		});
+	}
 	if(g_script && !g_script_qd.empty()) {
 #ifdef USE_QUICK_DISK
 		g_emu->open_quick_disk(0, g_script_qd.c_str());
@@ -305,6 +327,7 @@ static uint64_t get_time_ms()
 					g_emu->get_osd()->lock_vm();
 					run_frames = g_emu->run();
 					draw_frames += g_emu->draw_screen();
+					for(int k = 0; k < (run_frames > 0 ? run_frames : 1); k++) g_paste.step(g_emu);
 					g_emu->get_osd()->unlock_vm();
 				}
 				total_frames += run_frames;
@@ -344,7 +367,8 @@ static uint64_t get_time_ms()
 				// FPS & Screenshot update every 1 second
 				auto current_time = clock::now();
 				if(current_time - last_fps_update >= std::chrono::seconds(1)) {
-					if(getenv("RETROPC_SCREENSHOT") && ++sec_count >= 6) {
+					// RETROPC_SCREENSHOT=SECONDS (default 6): save a screenshot after that long and quit
+					if(getenv("RETROPC_SCREENSHOT") && ++sec_count >= (atoi(getenv("RETROPC_SCREENSHOT")) > 0 ? atoi(getenv("RETROPC_SCREENSHOT")) : 6)) {
 						g_emu->get_osd()->capture_screen();
 						dispatch_async(dispatch_get_main_queue(), ^{
 							[NSApp terminate:nil];
@@ -444,6 +468,7 @@ static uint64_t get_time_ms()
 	[self addMenuItemTo:ctrlMenu title:@"Full Speed" tag:ID_FULL_SPEED key:@"0"];
 	[ctrlMenu addItem:[NSMenuItem separatorItem]];
 	[self addMenuItemTo:ctrlMenu title:@"Paste Clipboard" tag:ID_AUTOKEY_START key:@"v"];
+	[self addMenuItemTo:ctrlMenu title:@"Stop Pasting" tag:ID_AUTOKEY_STOP key:@""];
 	[ctrlMenu addItem:[NSMenuItem separatorItem]];
 
 	// Save / Load state submenus
@@ -601,8 +626,22 @@ static uint64_t get_time_ms()
 		return;
 	}
 
-	if(cmdId == ID_RESET) {
+	if(cmdId == ID_AUTOKEY_START) {
+		NSString *text = [[NSPasteboard generalPasteboard] stringForType:NSPasteboardTypeString];
+		if(text.length) {
+			std::vector<std::string> lines = paste_lines([text UTF8String], false);
+			g_emu->get_osd()->lock_vm();
+			g_paste.start(lines);
+			g_emu->get_osd()->unlock_vm();
+			mac_log("[PASTE] %d lines", (int)lines.size());
+		}
+	} else if(cmdId == ID_AUTOKEY_STOP) {
 		g_emu->get_osd()->lock_vm();
+		g_paste.stop();
+		g_emu->get_osd()->unlock_vm();
+	} else if(cmdId == ID_RESET) {
+		g_emu->get_osd()->lock_vm();
+		g_paste.stop();
 		g_emu->reset();
 		g_emu->get_osd()->unlock_vm();
 	} else if(cmdId >= ID_CPU_POWER0 && cmdId <= ID_CPU_POWER4) {

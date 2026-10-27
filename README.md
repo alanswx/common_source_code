@@ -10,6 +10,9 @@ The port adds:
 
 - A macOS front-end (`src/mac/`): Metal video, CoreAudio sound, menus for disks,
   tapes, Quick Disks and cartridges, ROM alias discovery and a missing-ROM report.
+- A Linux front-end (`src/linux/`): an SDL2 window with sound and keyboard.
+- Paste Clipboard on both: text is typed one line at a time through the
+  machine's auto key, with kana converted to the machine's half-width kana.
 - A CMake build of all 128 machine targets: `.app` bundles on macOS, plain
   executables on Linux.
 - Headless command-line modes for automated testing and for comparison against
@@ -32,21 +35,31 @@ looks for them in `~/Library/Application Support/CommonSourceCodeProject/<machin
 
 ## Building on Linux
 
-The Linux build has the headless command line only so far; a window and sound
-(SDL2) come next. It needs CMake, g++ and zlib (`zlib1g-dev` on Ubuntu).
+Needs CMake, g++, zlib and SDL2 (`sudo apt install cmake g++ zlib1g-dev
+libsdl2-dev` on Ubuntu). Without SDL2 the build has the headless command line
+only.
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j 16
+build/fm7                                   # window; ROMs in ~/.local/share/CommonSourceCodeProject/fm7/
+build/x1turbo game.d88 --paste listing.txt  # mount by extension, then type a listing
 build/fm7 --headless --rom-dir ~/roms/fm7 --out /tmp/fm7-run --stop-at-frame 600 --final-screenshot
 ```
 
+The window has no menus. Files given on the command line or dropped on the
+window are mounted by extension; `--disk-a` .. `--disk-d`, `--tape`, `--qd` and
+`--cart` choose the drive. Host keys use Ctrl+Alt so they never reach the
+machine: Ctrl+Alt+V pastes the clipboard, +R resets, +T toggles full speed, +S
+saves a screenshot, +F (or Alt+Enter) toggles full screen, +Q quits. `--usage`
+lists the options.
+
 ROM and media names are matched ignoring case, as on macOS: `fbasic30.rom`
-satisfies `FBASIC30.ROM`. The same command line gives the same frames on both
-systems.
+satisfies `FBASIC30.ROM`. The same headless command line gives the same frames
+on both systems.
 
 `src/posix/` holds the OSD layer shared by both systems; `src/mac/` and
-`src/linux/` add the host's sound, PNG writer and `main`.
+`src/linux/` add the host's window, sound, PNG writer and `main`.
 
 ## Command-line modes
 
@@ -68,7 +81,8 @@ and tape images, and a one-line JSON result. See [CLI.md](CLI.md).
 1. Automated testing of type-in BASIC listings on the shared CLI: wait for the
    BASIC prompt, read the screen back as text, find the lines BASIC rejected,
    and save the program as a tape or floppy image.
-2. Linux: an SDL2 window and sound (the headless CLI already builds and runs).
+2. Linux: menus or an on-screen panel for media and settings (the window,
+   sound, keyboard and paste work).
 3. CI on macOS and Linux.
 
 [MISTER_CORE_GAPS.md](MISTER_CORE_GAPS.md) compares the CSCP machines with the

@@ -12,6 +12,7 @@
 #include "../fileio.h"
 #include "../vm/device.h"
 #include "headless.h"
+#include "paste.h"
 #if defined(_BMJR)
 #include "../vm/bmjr/memory.h"
 #endif
@@ -405,63 +406,9 @@ void type_keys(Options &o) {
 }
 
 // --- --paste: text through the VM's auto key (EMU::set_auto_key_list, the Windows "Paste") ---------------
-// UTF-8 in; out the bytes auto key understands: ASCII, CR line ends and JIS X 0201 kana ($A1-$DF).
-// Full-width kana, hiragana and ASCII become half-width; voiced kana split into kana + dakuten.
-const char *KANA_TABLE =
-    "ァｧアｱィｨイｲゥｩウｳェｪエｴォｫオｵカｶガｶﾞキｷギｷﾞクｸグｸﾞケｹゲｹﾞコｺゴｺﾞサｻザｻﾞシｼジｼﾞスｽズｽﾞセｾゼｾﾞソｿゾｿﾞ"
-    "タﾀダﾀﾞチﾁヂﾁﾞッｯツﾂヅﾂﾞテﾃデﾃﾞトﾄドﾄﾞナﾅニﾆヌﾇネﾈノﾉハﾊバﾊﾞパﾊﾟヒﾋビﾋﾞピﾋﾟフﾌブﾌﾞプﾌﾟヘﾍベﾍﾞペﾍﾟ"
-    "ホﾎボﾎﾞポﾎﾟマﾏミﾐムﾑメﾒモﾓャｬヤﾔュｭユﾕョｮヨﾖラﾗリﾘルﾙレﾚロﾛヮﾜワﾜヰｲヱｴヲｦンﾝヴｳﾞヵｶヶｹ"
-    "。｡「｢」｣、､・･ーｰ゛ﾞ゜ﾟ";
-std::vector<uint32_t> decode_utf8(const std::string &s,size_t line) {
-    std::vector<uint32_t> out;
-    for(size_t i=0;i<s.size();) {
-        unsigned char c=s[i];int n=c<0x80 ? 1 : (c>>5)==6 ? 2 : (c>>4)==14 ? 3 : (c>>3)==30 ? 4 : 0;
-        if(!n || i+n>s.size()) throw std::runtime_error("line "+std::to_string(line)+": invalid UTF-8");
-        uint32_t cp=n==1 ? c : n==2 ? c&0x1f : n==3 ? c&0x0f : c&0x07;
-        for(int k=1;k<n;k++) cp=cp<<6 | (s[i+k]&0x3f);
-        out.push_back(cp);i+=n;
-    }
-    return out;
-}
-std::string to_machine_text(const std::string &line,size_t number) {
-    static std::map<uint32_t,std::string> kana;
-    if(kana.empty()) {
-        uint32_t key=0;
-        for(uint32_t cp:decode_utf8(KANA_TABLE,0)) {
-            if(cp>=0xff61 && cp<=0xff9f) kana[key]+=char(cp-0xff61+0xa1);
-            else key=cp;
-        }
-    }
-    std::string out;
-    size_t col=0;
-    for(uint32_t cp:decode_utf8(line,number)) {
-        col++;
-        if(cp>=0x3041 && cp<=0x3096) cp+=0x60;               // hiragana -> katakana
-        if(cp>=0xff01 && cp<=0xff5e) cp-=0xfee0;              // full-width ASCII
-        if(cp==0x3000) cp=' ';
-        if(cp=='\t' || (cp>=0x20 && cp<0x7f)) out+=char(cp);
-        else if(cp==0xa5) out+='\\';                         // yen sign is $5C
-        else if(cp==0x203e) out+='~';
-        else if(cp>=0xff61 && cp<=0xff9f) out+=char(cp-0xff61+0xa1);
-        else if(kana.count(cp)) out+=kana[cp];
-        else {
-            char b[96];snprintf(b,sizeof(b),"line %zu column %zu: U+%04X has no key on this machine",number,col,cp);
-            throw std::runtime_error(b);
-        }
-    }
-    return out;
-}
 Paste make_paste(int frame,const std::string &text) {
     Paste p{frame,{},{}};
-    size_t pos=0,n=0;
-    while(pos<text.size()) {
-        size_t nl=text.find('\n',pos);
-        std::string line=text.substr(pos,nl==std::string::npos ? std::string::npos : nl-pos);
-        pos=nl==std::string::npos ? text.size() : nl+1;
-        if(!line.empty() && line.back()=='\r') line.pop_back();
-        p.source.push_back(line);
-        p.lines.push_back(to_machine_text(line,++n));
-    }
+    p.lines=paste_lines(text,true,&p.source);
     return p;
 }
 std::string unescape(const std::string &s) {
@@ -481,29 +428,13 @@ struct PasteRun {
     size_t total() const { size_t n=0;for(auto p:queue) n+=p->lines.size();return n; }
     size_t typed=0;
     bool done() const { return paste>=queue.size(); }
-#if defined(_PC6001)
-    // The PC-6001's KANA key gives hiragana until SHIFT+PAGE (VK_END in sub.cpp) selects katakana, the
-    // half-width kana auto key types. Pressed once, before the first line.
-    int kata_phase=0;
-    bool select_katakana() {
-        static const int seq[][2]={{0x10,1},{0x23,1},{0x23,0},{0x10,0}};
-        if(kata_phase>=4*6) return true;
-        if(kata_phase%6==0) {
-            const int *k=seq[kata_phase/6];
-            if(k[1]) machine->key_down(k[0],false,false); else machine->key_up(k[0],false);
-        }
-        kata_phase++;
-        return false;
-    }
-#endif
+    PastePreamble preamble;   // PC-6001: katakana mode, once before the first line
     void step(int gap) {
 #ifdef USE_AUTO_KEY
         if(done()) return;
         const Paste &p=*queue[paste];
         if(current_frame<p.frame || machine->is_auto_key_running()) { idle_since=-1;return; }
-#if defined(_PC6001)
-        if(!select_katakana()) return;
-#endif
+        if(!preamble.step(machine)) return;
         if(line>0 && idle_since<0) {
             idle_since=current_frame;
             if(log) fprintf(log,"%zu,%d,%d,%s\n",typed,line_start,current_frame,json_string(p.source[line-1]).c_str());

@@ -1046,8 +1046,9 @@ const _TCHAR *DLL_PREFIX get_application_path()
 		_my_mkdir(cpath);
 		strncpy(app_path, cpath.c_str(), _MAX_PATH - 1);
 #else
-		// the headless CLI points this at its explicit ROM directory
+		// the headless CLI points this at its explicit ROM directory, the Linux GUI at its data directory
 		const char *cli_dir = getenv("RETROPC_CLI_DATA_DIR");
+		if(!cli_dir || !*cli_dir) cli_dir = getenv("RETROPC_DATA_DIR");
 		if(cli_dir && *cli_dir) {
 			my_tcscpy_s(app_path, _MAX_PATH, cli_dir);
 			size_t n = strlen(app_path);

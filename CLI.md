@@ -95,7 +95,7 @@ waits for the drive before BASIC starts.
 | pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
 | pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
 | x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting |
-| x1turbo | ~1500 | HuBASIC CZ-8CB01. Use `--monitor-type 1` (Standard): in High Resolution mode 8x16 text draws only the top half of each glyph |
+| x1turbo | ~1500 | HuBASIC CZ-8CB01. Use `--monitor-type 1` (Standard). In High Resolution mode the IPL sets port 1FD0h to 03, CZ-8CB01 reprograms the CRTC for 200 lines but never clears 1FD0h, and CSCP then takes rows 0-7 of the 8x16 font (`FONT16_EN` tests bits 0 and 2; MAME uses bit 2 only). Which is right needs a hardware reference |
 
 X1 ROM names: the CLI accepts the names the VM itself tries, `IPLROM.X1`/`IPLROM.X1T` or `IPL.ROM`, `ANK8.ROM` or
 `FNT0808.X1`, `ANK16.ROM` or `FNT0816.X1`. `KANJI.ROM` or `FNT1616.X1` is optional; without it the JSON has

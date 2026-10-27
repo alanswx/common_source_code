@@ -35,6 +35,7 @@ set(RETROPC_COMMON_SOURCES
     src/debugger.cpp
     src/emu.cpp
     src/cli/headless.cpp
+    src/cli/paste.cpp
     src/posix/osd.cpp
 )
 
@@ -61,14 +62,23 @@ if(APPLE)
         ${IMAGEIO_FRAMEWORK}
     )
 else()
-    # Linux: the headless command line only, for now
+    # Linux: the SDL2 window and sound when SDL2 is installed, else the headless command line only
     find_package(ZLIB REQUIRED)
     find_package(Threads REQUIRED)
+    find_package(SDL2 QUIET)
     set(RETROPC_HOST_SOURCES
         src/linux/osd_linux.cpp
         src/linux/main.cpp
     )
     set(RETROPC_HOST_LIBRARIES ZLIB::ZLIB Threads::Threads)
+    if(SDL2_FOUND)
+        list(APPEND RETROPC_HOST_SOURCES src/linux/sdl_main.cpp)
+        list(APPEND RETROPC_HOST_LIBRARIES SDL2::SDL2)
+        add_compile_definitions(RETROPC_SDL)
+    else()
+        message(STATUS "SDL2 not found: building the headless command line only")
+        list(APPEND RETROPC_HOST_SOURCES src/linux/sound_null.cpp)
+    endif()
 endif()
 
 function(add_retropc_app TARGET_NAME DISPLAY_NAME COMPILE_DEFS ICON_FILE)
