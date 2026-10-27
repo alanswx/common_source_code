@@ -36,6 +36,7 @@ original CLIs.
 | `--disk-output-a NEW_COPY` .. | That drive's copy is writable and kept at `NEW_COPY` (use it to save a program to disk) |
 | `--writable-disks` | Every drive's copy is writable |
 | `--tape FILE` | Play from frame 0, in any format the VM reads (`.wav .cas .mzt .p6 .p6t .t77 .tap .cmt` ...) |
+| `--tape-at FRAME` | Insert the tape before FRAME instead. MZ machines start playback only if the motor is already on, so insert after the load command |
 | `--record-tape FILE` | Record to a new file: `.wav` or `.tap` on most machines, `.t77` on FM-7. PC-8001/8801 always write a `.cmt` byte stream |
 | `--qd FILE`, `--cart FILE` | Quick Disk, cartridge |
 | `--paste FRAME:FILE` | Type a UTF-8 text file through the VM's auto key, one line at a time (see below) |
@@ -53,6 +54,7 @@ original CLIs.
 | `--trace-from F`, `--trace-to F`, `--watch-pc ADDR,...` | Trace window; instruction counts at addresses |
 | `--poke ADDR=BYTES@FRAME`, `--dump-mem ADDR:LEN@FRAME`, `--dump-memory FILE` | 64 KiB through the CPU's debugger view (hex) |
 | `--wav FILE` | The mixed sound output |
+| `--monitor-type N` | The machine's Monitor Type menu item, 0 = first (machines with that menu) |
 
 `OUT/frames.csv` has one row per frame: frame, emulator clock, width, height, next PC and an FNV-1a-64 hash of
 the RGB picture.
@@ -85,11 +87,18 @@ waits for the drive before BASIC starts.
 | Machine | Ready at | Notes |
 | --- | --- | --- |
 | fm7 | ~600 | |
+| msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
+| mz700 | ~13450 | Boots to the monitor. BASIC 1Z-013B from tape: `--type 300:L\n --tape 1Z-013B.mzf --tape-at 360`. "Ready" shows as kana with the Japanese `FONT.ROM` |
+| pc6001 | ~600 | Stops at `How Many Pages?`. Needs `SUBCPU.60`; MAME's `upd8049.ic17` is a bad dump. PC6001VX's compatible `SUBCPU.60` works. `--paste` selects katakana mode (SHIFT+PAGE) before the first line |
 | pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
 | pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
-| msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
-| pc6001 | | Needs a real `SUBCPU.60` (8049 keyboard MCU). MAME's `upd8049.ic17` is a bad dump and hangs at boot |
+| x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting |
+| x1turbo | ~1500 | HuBASIC CZ-8CB01. Use `--monitor-type 1` (Standard): in High Resolution mode 8x16 text draws only the top half of each glyph |
 
-Tested end to end with `--paste` (type a listing, `RUN`, check the output): FM-7, MSX1 (no disk ROM), PC-8001,
-PC-8001mkII, PC-8801, PC-8801mkII, PC-8801MA. The MZ-700 and X1 boot to a monitor or IPL; their BASIC loads
-from tape or disk, which the run must supply.
+X1 ROM names: the CLI accepts the names the VM itself tries, `IPLROM.X1`/`IPLROM.X1T` or `IPL.ROM`, `ANK8.ROM` or
+`FNT0808.X1`, `ANK16.ROM` or `FNT0816.X1`. `KANJI.ROM` or `FNT1616.X1` is optional; without it the JSON has
+`"kanji_rom":false`. With all four standard files the output is unchanged from cli_revision 4.
+
+Tested end to end with `--paste` (type a listing, `RUN`, check the output): FM-7, MSX1 (no disk ROM), MZ-700
+(1Z-013B from tape), PC-6001, PC-8001, PC-8001mkII, PC-8801, PC-8801mkII, PC-8801MA, X1 and X1turbo (HuBASIC
+from disk).

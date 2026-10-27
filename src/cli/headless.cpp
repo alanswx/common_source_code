@@ -52,6 +52,7 @@ int current_frame = 0, trace_from = 0, trace_to = INT_MAX, wav_rate = 44100;
 uint32_t wav_frames = 0;
 std::map<uint16_t,unsigned long> watch;
 std::string rom_dir_prefix;
+std::string x1_kanji_rom;	// CLI_X1: the kanji font file found, or empty
 std::set<std::string> roms_not_found;
 #ifdef USE_FLOPPY_DISK
 const int DRIVES = USE_FLOPPY_DISK;
@@ -65,7 +66,7 @@ struct Poke { int frame; unsigned addr; std::vector<uint8_t> bytes; };
 struct Paste { int frame; std::vector<std::string> lines, source; };
 struct Options {
     std::string rom_dir, out, disk[4], disk_output[4], tape, record, qd, cart, cpu, io, memory, wav;
-    int stop = -1, every = 0, press = 4, release = 4, line_gap = 0, after_paste = -1;
+    int stop = -1, every = 0, press = 4, release = 4, line_gap = 0, after_paste = -1, monitor_type = -1, tape_at = 0;
     bool writable = false, final_shot = false;
     std::set<int> shots, resets, special_resets;
     std::multimap<int,Key> keys;
@@ -449,11 +450,29 @@ struct PasteRun {
     size_t total() const { size_t n=0;for(auto p:queue) n+=p->lines.size();return n; }
     size_t typed=0;
     bool done() const { return paste>=queue.size(); }
+#if defined(_PC6001)
+    // The PC-6001's KANA key gives hiragana until SHIFT+PAGE (VK_END in sub.cpp) selects katakana, the
+    // half-width kana auto key types. Pressed once, before the first line.
+    int kata_phase=0;
+    bool select_katakana() {
+        static const int seq[][2]={{0x10,1},{0x23,1},{0x23,0},{0x10,0}};
+        if(kata_phase>=4*6) return true;
+        if(kata_phase%6==0) {
+            const int *k=seq[kata_phase/6];
+            if(k[1]) machine->key_down(k[0],false,false); else machine->key_up(k[0],false);
+        }
+        kata_phase++;
+        return false;
+    }
+#endif
     void step(int gap) {
 #ifdef USE_AUTO_KEY
         if(done()) return;
         const Paste &p=*queue[paste];
         if(current_frame<p.frame || machine->is_auto_key_running()) { idle_since=-1;return; }
+#if defined(_PC6001)
+        if(!select_katakana()) return;
+#endif
         if(line>0 && idle_since<0) {
             idle_since=current_frame;
             if(log) fprintf(log,"%zu,%d,%d,%s\n",typed,line_start,current_frame,json_string(p.source[line-1]).c_str());
@@ -476,6 +495,7 @@ void help() {
         "  --disk-output-a NEW_COPY ...  that drive's copy is writable and kept at NEW_COPY\n"
         "  --writable-disks              every drive's copy is writable\n"
         "  --tape FILE                   play from frame 0 (.wav .cas .mzt .p6 .t77 .tap .cmt ... as the VM reads)\n"
+        "  --tape-at FRAME               insert the tape before FRAME instead (MZ: after the load command starts the motor)\n"
         "  --record-tape FILE            record to a new file in OUT (.wav .tap; .t77 on FM-7; PC-8001/8801 write .cmt)\n"
         "  --qd FILE  Quick Disk;  --cart FILE  cartridge\n"
         "Input:\n"
@@ -495,13 +515,17 @@ void help() {
         "  --trace-from FRAME --trace-to FRAME   inclusive trace window;  --watch-pc ADDR[,ADDR...]\n"
         "  --poke ADDR=BYTES@FRAME  --dump-mem ADDR:LEN@FRAME  --dump-memory FILE   (64 KiB, hex)\n"
         "  --wav FILE                    the mixed sound output (16-bit stereo, the VM's rate)\n"
+#ifdef USE_MONITOR_TYPE
+        "  --monitor-type N              the machine's Monitor Type menu item (0 = first)\n"
+#endif
         "Frames 0..N inclusive; scheduled actions precede a frame, captures follow it.\n"
         "OUT/frames.csv: frame,clock,width,height,pc,rgb_fnv1a64 for every frame; OUT/paste.csv per pasted line.\n"
         "The ROM directory is isolated: no saved config and no global ROM fallback.\n",
         CONFIG_NAME);
 #if defined(CLI_X1)
-    fprintf(stdout,"Requires %s (%d), ANK8.ROM (2048), ANK16.ROM (4096), KANJI.ROM (306176).\n"
-        "KANJI.ROM is CSP's virtual glyph layout, not the FPGA physical ROM layout.\n",IPL_ROM_FILE_NAME,IPL_ROM_FILE_SIZE);
+    fprintf(stdout,"Requires %s or IPL.ROM (%d), ANK8.ROM or FNT0808.X1 (2048), ANK16.ROM or FNT0816.X1 (4096).\n"
+        "Optional KANJI.ROM or FNT1616.X1 (306176): CSP's virtual glyph layout, not the FPGA physical ROM layout.\n",
+        IPL_ROM_FILE_NAME,IPL_ROM_FILE_SIZE);
 #elif defined(_SMC777)
     fprintf(stdout,"Requires SMCROM.DAT or SMC777ROM.DAT (16384 bytes); KANJIROM.DAT optional.\n");
 #elif defined(CLI_BMJR)
@@ -538,6 +562,7 @@ int retropc_headless(int argc,const char **argv) {
             }
             else if(a=="--writable-disks") o.writable=true;
             else if(a=="--tape") o.tape=next();
+            else if(a=="--tape-at") o.tape_at=number(next());
             else if(a=="--record-tape") o.record=next();
             else if(a=="--qd") o.qd=next();
             else if(a=="--cart") o.cart=next();
@@ -579,6 +604,9 @@ int retropc_headless(int argc,const char **argv) {
             else if(a=="--trace-from") trace_from=number(next());
             else if(a=="--trace-to") trace_to=number(next());
             else if(a=="--wav") o.wav=next();
+#ifdef USE_MONITOR_TYPE
+            else if(a=="--monitor-type") { o.monitor_type=number(next());if(o.monitor_type>=USE_MONITOR_TYPE) throw std::runtime_error("--monitor-type out of range"); }
+#endif
             else throw std::runtime_error("unknown option: "+a);
         }
         if(o.stop<0 || o.stop>5000000 || o.out.empty() || o.rom_dir.empty() || o.press<1 || o.release<1 || trace_to<trace_from)
@@ -586,6 +614,7 @@ int retropc_headless(int argc,const char **argv) {
         type_keys(o);
         for(auto f:o.shots) if(f>o.stop) throw std::runtime_error("screenshot after stop");
         for(auto f:o.resets) if(f>o.stop) throw std::runtime_error("reset after stop");
+        if(o.tape_at<0 || o.tape_at>o.stop || (o.tape_at>0 && o.tape.empty())) throw std::runtime_error("--tape-at needs --tape and a frame within the run");
         for(auto f:o.special_resets) if(f>o.stop) throw std::runtime_error("reset after stop");
         for(auto &k:o.keys) if(k.first>o.stop) throw std::runtime_error("key event after stop");
         for(auto &d:o.dumps) if(d.frame>o.stop) throw std::runtime_error("dump after stop");
@@ -622,7 +651,22 @@ int retropc_headless(int argc,const char **argv) {
                 throw std::runtime_error(std::string("required: ")+name+" ("+std::to_string(size)+" bytes) in "+o.rom_dir);
         };
 #if defined(CLI_X1)
-        need(IPL_ROM_FILE_NAME,IPL_ROM_FILE_SIZE);need("ANK8.ROM",2048);need("ANK16.ROM",4096);need("KANJI.ROM",306176);
+        // the names display.cpp/memory.cpp try, in their order; the first present one must have the right size
+        auto need_any=[&](std::initializer_list<const char*> names,long size,bool optional) -> std::string {
+            for(const char *n:names) {
+                long sz=file_size(o.rom_dir+"/"+n);
+                if(sz<0) continue;
+                if(sz!=size) throw std::runtime_error(std::string("wrong size: ")+n+" ("+std::to_string(size)+" bytes expected) in "+o.rom_dir);
+                return n;
+            }
+            if(optional) return "";
+            std::string all;for(const char *n:names) all+=(all.empty() ? "" : " or ")+std::string(n);
+            throw std::runtime_error("required: "+all+" ("+std::to_string(size)+" bytes) in "+o.rom_dir);
+        };
+        need_any({IPL_ROM_FILE_NAME,"IPL.ROM"},IPL_ROM_FILE_SIZE,false);
+        need_any({"ANK8.ROM","FNT0808.X1"},2048,false);
+        need_any({"ANK16.ROM","FNT0816.X1"},4096,false);
+        x1_kanji_rom=need_any({"KANJI.ROM","FNT1616.X1"},306176,true);
 #elif defined(_SMC777)
         if(file_size(o.rom_dir+"/SMCROM.DAT")!=16384 && file_size(o.rom_dir+"/SMC777ROM.DAT")!=16384)
             throw std::runtime_error("required: SMCROM.DAT or SMC777ROM.DAT (16384 bytes) in "+o.rom_dir);
@@ -706,6 +750,9 @@ int retropc_headless(int argc,const char **argv) {
         config.scan_line_auto=false;
         config.sound_type=0;   // explicit PSG-only reference; GUI default unchanged
 #endif
+#ifdef USE_MONITOR_TYPE
+        if(o.monitor_type>=0) config.monitor_type=o.monitor_type;
+#endif
         fileio_read_miss_hook=rom_miss;
         emu.reset(new EMU());machine=emu.get();
         hook(true);
@@ -721,11 +768,12 @@ int retropc_headless(int argc,const char **argv) {
 #endif
         }
 #ifdef USE_TAPE
-        if(!o.tape.empty()) {
+        auto insert_tape=[&]() {
             machine->play_tape(0,o.tape.c_str());
             if(!machine->is_tape_inserted(0)) throw std::runtime_error("tape rejected: "+o.tape);
-            fprintf(stderr,"[headless] tape: %s\n",o.tape.c_str());
-        }
+            fprintf(stderr,"[headless] tape before frame %d: %s\n",current_frame,o.tape.c_str());
+        };
+        if(!o.tape.empty() && o.tape_at==0) insert_tape();
         if(!o.record.empty()) {
             o.record=fresh_destination(o,o.record);
             machine->rec_tape(0,o.record.c_str());
@@ -742,6 +790,9 @@ int retropc_headless(int argc,const char **argv) {
         int stop=o.stop;
         for(current_frame=0;current_frame<=stop;current_frame++) {
             if(o.resets.count(current_frame)) { machine->reset();fprintf(stderr,"[headless] reset before frame %d\n",current_frame); }
+#ifdef USE_TAPE
+            if(!o.tape.empty() && o.tape_at>0 && current_frame==o.tape_at) insert_tape();
+#endif
 #ifdef USE_SPECIAL_RESET
             if(o.special_resets.count(current_frame)) { machine->special_reset();fprintf(stderr,"[headless] special reset before frame %d\n",current_frame); }
 #endif
@@ -803,6 +854,7 @@ int retropc_headless(int argc,const char **argv) {
         field("cli_revision","4");
         field("disk_policy",any_writable ? "\"explicit_writable_copy\"" : "\"protected_private_copy\"");
         field("writable_drives",std::string("[")+(writable[0] ? "true" : "false")+","+(writable[1] ? "true" : "false")+"]");
+        if(x1_kanji_rom.empty()) field("kanji_rom","false");	// printed only when missing, so full ROM sets match revision 4
 #else
         field("resets",std::to_string(o.resets.size()+o.special_resets.size()));
 #if defined(CLI_SMC777)

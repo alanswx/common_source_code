@@ -27,7 +27,9 @@ directory whose parent already exists:
   --dump-memory memory.bin
 ```
 
-The required files and exact sizes in `--rom-dir` are:
+The files and exact sizes in `--rom-dir` are below. Since the shared CLI, each may also use the name the VM
+itself tries next (`IPL.ROM`, `FNT0808.X1`, `FNT0816.X1`, `FNT1616.X1`), and the kanji font is optional
+(`"kanji_rom":false` in the JSON when absent). With these four files present nothing changes:
 
 | File | Bytes |
 | --- | ---: |
