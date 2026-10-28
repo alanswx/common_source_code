@@ -14,6 +14,8 @@
 #include "memory.h"
 #include "timer.h"
 
+#if defined(_PC6001)
+
 #define RAM		(MEMORY_BASE + RAM_BASE)
 #define BASICROM	(MEMORY_BASE + BASICROM_BASE)
 #define EXTROM		(MEMORY_BASE + EXTROM_BASE)
@@ -207,3 +209,4 @@ bool MEMORY::process_state(FILEIO* state_fio, bool loading)
 	state_fio->StateValue(inserted);
 	return true;
 }
+#endif

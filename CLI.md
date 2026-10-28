@@ -195,6 +195,7 @@ waits for the drive before BASIC starts.
 | msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
 | mz700 | ~13450 | Boots to the monitor. BASIC 1Z-013B from tape: `--type 300:L\n --tape 1Z-013B.mzf --tape-at 360`. "Ready" shows as kana with the Japanese `FONT.ROM` |
 | pc6001 | ~600 | Stops at `How Many Pages?`. Needs `SUBCPU.60`; MAME's `upd8049.ic17` is a bad dump. PC6001VX's compatible `SUBCPU.60` (`compatible_rom/basic60-v082`) runs BASIC, the keyboard and the tape: `.p6`, `.p6t` and `.wav` load with `CLOAD`. `--paste` selects katakana mode (SHIFT+PAGE) before the first line |
+| pc6001mk2 | ~400 | Asks for a BASIC mode (`5` is N60m BASIC), then `How Many Files?` and `How Many Pages?`. ROMs: MAME `pc6001mk2` (`basicrom.62`, `cgrom60.62`, `kanjirom.62`, `voicerom.62`, and `cgrom60m.62` saved as `CGROM62.62`) plus PC6001VX's compatible `SUBCPU.62` (`compatible_rom/basic66-v053`). Upstream's 2025 release builds the PC-6001 only; the mkII memory and screen are the 2/1/2020 release's (`memory_mk2.cpp`, `memory_draw.cpp`). Tapes load with `CLOAD` |
 | pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
 | pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
 | x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting |

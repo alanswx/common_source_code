@@ -2022,6 +2022,35 @@ add_retropc_app(pc6001 "NEC PC-6001" "_PC6001" "${CMAKE_CURRENT_SOURCE_DIR}/reso
     src/vm/z80.cpp
 )
 
+# Target: pc6001mk2
+add_retropc_app(pc6001mk2 "NEC PC-6001mkII" "_PC6001MK2" "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/pc6001mk2.icns"
+    src/vm/ay_3_891x.cpp
+    src/vm/datarec.cpp
+    src/vm/disk.cpp
+    src/vm/event.cpp
+    src/vm/fmgen/fmgen.cpp
+    src/vm/fmgen/fmtimer.cpp
+    src/vm/fmgen/opna.cpp
+    src/vm/fmgen/psg.cpp
+    src/vm/i8255.cpp
+    src/vm/io.cpp
+    src/vm/mcs48.cpp
+    src/vm/noise.cpp
+    src/vm/pc6001/joystick.cpp
+    src/vm/pc6001/memory.cpp
+    src/vm/pc6001/memory_draw.cpp
+    src/vm/pc6001/pc6001.cpp
+    src/vm/pc6001/sub.cpp
+    src/vm/pc6001/timer.cpp
+    src/vm/pc6031.cpp
+    src/vm/pc80s31k.cpp
+    src/vm/prnfile.cpp
+    src/vm/upd765a.cpp
+    src/vm/upd7752.cpp
+    src/vm/z80.cpp
+    src/vm/pc6001/memory_mk2.cpp
+)
+
 # Target: pc8001
 add_retropc_app(pc8001 "NEC PC-8001" "_PC8001" "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons/pc8001.icns"
     src/vm/ay_3_891x.cpp

@@ -13,7 +13,7 @@ The port adds:
 - A Linux front-end (`src/linux/`): an SDL2 window with sound and keyboard.
 - Paste Clipboard on both: text is typed one line at a time through the
   machine's auto key, with kana converted to the machine's half-width kana.
-- A CMake build of all 128 machine targets: `.app` bundles on macOS, plain
+- A CMake build of all 129 machine targets: `.app` bundles on macOS, plain
   executables on Linux.
 - Headless command-line modes for automated testing and for comparison against
   MiSTer FPGA cores. The headless mode reads the screen back as text, using a
@@ -26,7 +26,7 @@ The port adds:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j 8                     # all 128 machines
+cmake --build build -j 8                     # all 129 machines
 cmake --build build --target x1 mz700 -j 8   # or only some
 open build/mz700.app
 ```

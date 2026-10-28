@@ -11,7 +11,10 @@
 	[ memory ]
 */
 
-#ifndef _MEMORY_H_
+#if !defined(_PC6001)
+// the mkII and 6601 memory and screen, from the 2/1/2020 release (later releases build the PC-6001 only)
+#include "memory_mk2.h"
+#elif !defined(_MEMORY_H_)
 #define _MEMORY_H_
 
 #include "../vm.h"

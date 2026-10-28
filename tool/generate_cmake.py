@@ -19,7 +19,7 @@ TARGETS = [
     'pasopia', 'pasopia7', 'smc70', 'smc777', 'bmjr',
     'multi8', 'phc20', 'phc25', 'jr100', 'jr800',
     # NEC 8-Bit Lineage
-    'pc6001', 'pc8001', 'pc8001mk2', 'pc8001mk2sr', 'pc8201', 'pc100',
+    'pc6001', 'pc6001mk2', 'pc8001', 'pc8001mk2', 'pc8001mk2sr', 'pc8201', 'pc100',
     # Fujitsu 16-Bit & FMR Workstation Series
     'fm16beta_i186', 'fm16beta_i286', 'fm16pi',
     'fmr30_i86', 'fmr30_i286',
@@ -109,6 +109,7 @@ DISPLAY_NAMES = {
     'jr800': 'National JR-800',
     # NEC 8-Bit Lineage
     'pc6001': 'NEC PC-6001',
+    'pc6001mk2': 'NEC PC-6001mkII',
     'pc8001': 'NEC PC-8001',
     'pc8001mk2': 'NEC PC-8001mkII',
     'pc8001mk2sr': 'NEC PC-8001mkII SR',
@@ -247,13 +248,18 @@ def generate_icons(targets):
         if os.path.exists(base_png): os.remove(base_png)
         print(f'Generated icon: {out_icns}')
 
+# sources a target needs beyond its vc++2017 project
+EXTRA_SOURCES = {
+    'pc6001mk2': ['src/vm/pc6001/memory_mk2.cpp'],	# the 2/1/2020 mkII memory; memory.cpp is the PC-6001's
+}
+
 def get_target_sources(target_name):
     tree = ET.parse(f'vc++2017/{target_name}.vcxproj')
     root = tree.getroot()
     ns = {'ns': 'http://schemas.microsoft.com/developer/msbuild/2003'}
     sources = [elem.get('Include').replace('\\', '/').replace('../', '') for elem in root.findall('.//ns:ClCompile', ns) if elem.get('Include')]
     vm_sources = [s for s in sources if 'src/vm/' in s and os.path.exists(s)]
-    return vm_sources
+    return vm_sources + EXTRA_SOURCES.get(target_name, [])
 
 CMAKE_PREAMBLE = r"""cmake_minimum_required(VERSION 3.15)
 project(RetroPC LANGUAGES C CXX)

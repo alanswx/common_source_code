@@ -91,10 +91,7 @@
 #define TAPE_PC6001
 #define USE_AUTO_KEY		6
 #define USE_AUTO_KEY_RELEASE	10
-// the PC-6001 types lowercase letters without SHIFT; mkII and later have a CAPS key
-#if !defined(_PC6001)
-#define USE_AUTO_KEY_CAPS
-#endif
+// letters without SHIFT are lowercase: the PC-6001 has no CAPS key, and the mkII starts with CAPS off
 #if !defined(_PC6001)
 #define USE_SCREEN_FILTER
 #define USE_SCANLINE
