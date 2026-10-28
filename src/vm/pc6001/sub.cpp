@@ -152,9 +152,10 @@ uint32_t SUB::read_io8(uint32_t addr)
 			if(p1_out & 0x10) {
 				return p2_in;
 			} else {
-				// bit3: signal from datarec
-				// bit1: rxrdy from rs-232c
-				return (rxrdy_in ? 2 : 0) | (drec_in ? 8 : 0) | (p2_in & 0xf0);
+				// bit3: signal from datarec, inverted: the sub cpu times each 1200/2400Hz cycle
+				// from one falling edge to the next, and datarec cycles start high
+				// bit1: #rxrdy from rs-232c, low when a byte has arrived
+				return (rxrdy_in ? 0 : 2) | (drec_in ? 0 : 8) | (p2_in & 0xf0);
 			}
 		case MCS48_PORT_T0:
 			// PC5 -> T0

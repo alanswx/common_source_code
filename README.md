@@ -85,8 +85,8 @@ screen as UTF-8 text. See [CLI.md](CLI.md), which also covers `tool/typein.py`.
 ## Roadmap
 
 1. Type-ins: run `tool/typein.py` over the magazine archive. Remaining gaps:
-   MZ-700 kana, PC-6001 tape loading, more machines' save commands, and DLE
-   (dump list editor) tapes.
+   MZ-700 kana, more machines' save commands, and DLE (dump list editor)
+   tapes.
 2. Linux: menus or an on-screen panel for media and settings (the window,
    sound, keyboard and paste work).
 3. CI on macOS and Linux.

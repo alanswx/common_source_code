@@ -129,7 +129,7 @@ frames; `--stop-at-frame` still bounds the whole run.
 | `frames N` | Run N frames |
 | `learn-font`, `font FILE` | Learn the screen font into `OUT/font.txt`, or load one |
 | `wait TEXT` | Until TEXT appears anywhere on the screen |
-| `prompt TEXT` | Until a row below the line typed last is TEXT, such as `Ok` or `Ready`. A prompt already on the screen does not count |
+| `prompt TEXT` | Until a row below the line typed last is TEXT, such as `Ok` or `Ready`. A prompt already on the screen does not count. If the output scrolls the typed line away, TEXT must be the lowest row that changed since it was typed |
 | `idle N` | Until auto key is idle and the screen text has not changed for N frames (one changing cell is the cursor blinking) |
 | `timeout N` | Frames a `wait`, `prompt` or `idle` may take (default 3000) |
 | `paste FILE`, `line TEXT` | Paste a file (relative to the script) or one line, as `--paste` does, and wait until it is typed |
@@ -180,7 +180,7 @@ Tested with a 36-line listing (long wrapped lines, kana, lowercase strings, `?`)
 | x1 | `.tap`, or `.d88` with `--save disk` | Identical. A `.wav` recording gives "Tape read error" on loading |
 | bmjr | `.wav` | Identical (a 7-line uppercase listing; `LIST a,b`) |
 | mz700 | `.wav` | Every line typed. Kana come out as ASCII (no key), which typein reports. Needs `line-gap 30`, or BASIC drops the first character of the next line |
-| pc6001 | `.p6` | Lines longer than about 80 characters are cut short by BASIC, which typein reports. Not loaded back: `CLOAD` finds nothing with the `SUBCPU.60` tested, even with the archive's own `.p6t` tapes |
+| pc6001 | `.p6` | Lines longer than about 80 characters are cut short by BASIC, which typein reports. Loaded back and checked |
 
 The runs are the same on macOS and Linux: the learned font and the saved tape are byte-identical.
 
@@ -194,7 +194,7 @@ waits for the drive before BASIC starts.
 | fm7 | ~600 | |
 | msx1 | ~600 | Needs a disk ROM written for CSCP's pseudo disk BIOS, or none. A `DISK.ROM` that polls a TC8566AF at 7FFAh hangs at the logo |
 | mz700 | ~13450 | Boots to the monitor. BASIC 1Z-013B from tape: `--type 300:L\n --tape 1Z-013B.mzf --tape-at 360`. "Ready" shows as kana with the Japanese `FONT.ROM` |
-| pc6001 | ~600 | Stops at `How Many Pages?`. Needs `SUBCPU.60`; MAME's `upd8049.ic17` is a bad dump. PC6001VX's compatible `SUBCPU.60` runs BASIC and the keyboard, but `CLOAD` finds nothing with it. `--paste` selects katakana mode (SHIFT+PAGE) before the first line |
+| pc6001 | ~600 | Stops at `How Many Pages?`. Needs `SUBCPU.60`; MAME's `upd8049.ic17` is a bad dump. PC6001VX's compatible `SUBCPU.60` (`compatible_rom/basic60-v082`) runs BASIC, the keyboard and the tape: `.p6`, `.p6t` and `.wav` load with `CLOAD`. `--paste` selects katakana mode (SHIFT+PAGE) before the first line |
 | pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
 | pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
 | x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting |

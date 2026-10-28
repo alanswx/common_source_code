@@ -613,7 +613,7 @@ struct ScriptRun {
     size_t pc=0;
     bool begun=false, stop=false;
     int start=0, until=0, timeout=3000, stable=0;
-    std::vector<std::string> last_rows;
+    std::vector<std::string> last_rows, typed_rows;	// typed_rows: the screen before the last line or paste
     std::list<Paste> pastes;
     std::vector<std::pair<int,std::string>> typed_lines;   // SCRIPT_TYPES_KEYS: each line's first frame and source
     size_t typed_next=0;
@@ -652,6 +652,7 @@ struct ScriptRun {
         if(c.op=="frames") { until=current_frame+number(a);return false; }
         if(c.op=="wait" || c.op=="idle" || c.op=="prompt") { need_font();stable=0;last_rows.clear();return false; }
         if(c.op=="paste" || c.op=="line") {
+            typed_rows=screen_rows;
             std::string text=a;
             if(c.op=="paste") { auto d=read_file(relative(a));text.assign(d.begin(),d.end()); }
             if(!SCRIPT_TYPES_KEYS) { queue_paste(text);return false; }
@@ -725,17 +726,32 @@ struct ScriptRun {
 #ifdef USE_AUTO_KEY
             if(machine->is_auto_key_running() || !paste_run.done()) return false;
 #endif
+            // the echo starts the row, after a prompt character at most; any other row holding it (a function key bar
+            // showing CLOAD, say) is only used when there is no such row
             std::string anchor=paste_run.last_source.substr(0,16);
             int below=-1;
-            for(int r=int(screen_rows.size())-1;r>=0 && below<0;r--) if(!anchor.empty() && screen_utf8(screen_rows[r]).find(anchor)!=std::string::npos) below=r;
-            if(below<0) return false;
-            for(size_t r=below+1;r<screen_rows.size();r++) {
+            for(size_t most:{size_t(2),std::string::npos})
+                for(int r=int(screen_rows.size())-1;r>=0 && below<0;r--) {
+                    size_t at=anchor.empty() ? std::string::npos : screen_utf8(screen_rows[r]).find(anchor);
+                    if(at!=std::string::npos && at<=most) below=r;
+                }
+            auto is_text=[&](size_t r) {
                 std::string row=screen_rows[r];
                 while(!row.empty() && (row.back()==UNKNOWN_CHAR || row.back()==' ')) row.pop_back();   // a cursor of its own shape
                 std::string u=screen_utf8(row);
                 size_t b=u.find_first_not_of(' ');
-                if(b!=std::string::npos && u.substr(b)==c.arg) return true;
+                return b!=std::string::npos && u.substr(b)==c.arg;
+            };
+            if(below<0) {
+                // the output scrolled the line off the screen: TEXT must be the last row that changed since it was typed
+                for(int r=int(screen_rows.size())-1;r>=0;r--) {
+                    bool blank=screen_rows[r].find_first_not_of(std::string{' ',UNKNOWN_CHAR})==std::string::npos;
+                    if(blank || (size_t(r)<typed_rows.size() && typed_rows[r]==screen_rows[r])) continue;
+                    return is_text(r);
+                }
+                return false;
             }
+            for(size_t r=below+1;r<screen_rows.size();r++) if(is_text(r)) return true;
             return false;
         }
         if(c.op=="idle") {
