@@ -165,7 +165,13 @@ text list.txt
    (`--save tape`, the default; `--save disk` on the X1 writes a copy of the BASIC disk with the program on it).
 3. It boots again, loads the saved copy, and lists and compares it again.
 
-`OUT/report.json` has the mismatches, the screen errors and any listing characters the machine has no key for.
+Some BASICs take only so many characters in a typed line and drop the rest without an error (N60-BASIC on the
+PC-6001 and mkII: 71). A longer line is typed with `?` for `PRINT` and without the spaces beside punctuation
+outside strings (up to a `REM`, `'` or `DATA`), which lists the same. A line still too long is reported in
+`too_long` and on stderr before typing starts.
+
+`OUT/report.json` has the mismatches, the screen errors, any listing characters the machine has no key for, and
+lines too long to type.
 The exit status is 0 when every line came back as typed, 1 when not, and 2 on an error. Use `--build DIR` for
 the build directory (default `build`, or `$RETROPC_BUILD`). The MZ-700 needs its BASIC tape and the X1 its
 Hu-BASIC disk, given with `--basic FILE`.
@@ -180,7 +186,7 @@ Tested with a 36-line listing (long wrapped lines, kana, lowercase strings, `?`)
 | x1 | `.tap`, or `.d88` with `--save disk` | Identical. A `.wav` recording gives "Tape read error" on loading |
 | bmjr | `.wav` | Identical (a 7-line uppercase listing; `LIST a,b`) |
 | mz700 | `.wav` | Every line typed. Kana come out as ASCII (no key), which typein reports. Needs `line-gap 30`, or BASIC drops the first character of the next line |
-| pc6001 | `.p6` | Lines longer than about 80 characters are cut short by BASIC, which typein reports. Loaded back and checked |
+| pc6001, pc6001mk2 | `.p6` | The 4 lines over 90 characters are too long for N60-BASIC even shortened, so it keeps 71 of each, which typein reports. Loaded back and checked. A 5-line listing with 70–76 character lines comes back identical once shortened. The mkII runs mode 5 |
 
 The runs are the same on macOS and Linux: the learned font and the saved tape are byte-identical.
 
@@ -198,7 +204,7 @@ waits for the drive before BASIC starts.
 | pc6001mk2 | ~400 | Asks for a BASIC mode (`5` is N60m BASIC), then `How Many Files?` and `How Many Pages?`. ROMs: MAME `pc6001mk2` (`basicrom.62`, `cgrom60.62`, `kanjirom.62`, `voicerom.62`, and `cgrom60m.62` saved as `CGROM62.62`) plus PC6001VX's compatible `SUBCPU.62` (`compatible_rom/basic66-v053`). Upstream's 2025 release builds the PC-6001 only; the mkII memory and screen are the 2/1/2020 release's (`memory_mk2.cpp`, `memory_draw.cpp`). Tapes load with `CLOAD` |
 | pc8001, pc8001mk2 | ~1100 (~260 without `DISK.ROM`) | Font from `KANJI1.ROM`, or MAME's 2 KB `FONT.ROM` |
 | pc8801, pc8801mk2, pc8801ma | ~2750 (~1060 without `DISK.ROM`) | Stops at `How many files(0-15)?`: send `--type FRAME:{RETURN}` first |
-| x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting |
+| x1 | ~1500 | HuBASIC CZ-8FB01 from `--disk-a`. Some boot disks leave text on the input line: send `{RETURN}` before pasting. Machine-code `.tap` games boot from the IPL with no disk. BASIC ones ("File mode error" from the IPL) need Hu-BASIC first, then `RUN"CAS:"`. With the wave shaper on (the default), each half cycle of a `.tap` is made exactly short or long, so tapes sampled from audio (22050 or 44100 Hz) load |
 | x1turbo | ~1500 | HuBASIC CZ-8CB01. Use `--monitor-type 1` (Standard). In High Resolution mode the IPL sets port 1FD0h to 03, CZ-8CB01 reprograms the CRTC for 200 lines but never clears 1FD0h, and CSCP then takes rows 0-7 of the 8x16 font (`FONT16_EN` tests bits 0 and 2; MAME uses bit 2 only). Which is right needs a hardware reference |
 
 X1 ROM names: the CLI accepts the names the VM itself tries, `IPLROM.X1`/`IPLROM.X1T` or `IPL.ROM`, `ANK8.ROM` or

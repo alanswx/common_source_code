@@ -476,8 +476,6 @@ bool DATAREC::play_tape(const _TCHAR* file_path)
 		} else if(check_file_extension(play_fio->FilePath(), _T(".tap"))) {
 			// SHARP X1 series tape image
 			if((buffer_length = load_tap_image()) != 0) {
-				buffer = (uint8_t *)malloc(buffer_length);
-				load_tap_image();
 				play = is_wav = true;
 			}
 		} else if(check_file_extension(play_fio->FilePath(), _T(".mzt")) || check_file_extension(play_fio->FilePath(), _T(".mzf")) || check_file_extension(play_fio->FilePath(), _T(".m12"))) {
@@ -1086,16 +1084,86 @@ int DATAREC::load_tap_image()
 	}
 	
 	// load samples
-	int ptr = 0, data;
-	while((data = play_fio->Fgetc()) != EOF) {
+	int samples = (file_size - play_fio->Ftell()) * 8, ptr = 0, data;
+	if(samples <= 0) {
+		return 0;
+	}
+	buffer = (uint8_t *)malloc(samples);
+	while((data = play_fio->Fgetc()) != EOF && ptr < samples) {
 		for(int i = 0, bit = 0x80; i < 8; i++, bit >>= 1) {
-			if(buffer != NULL) {
-				buffer[ptr] = ((data & bit) != 0) ? 255 : 0;
-			}
-			ptr++;
+			buffer[ptr++] = ((data & bit) != 0) ? 255 : 0;
 		}
 	}
+	if(config.wave_shaper[drive_num]) {
+		ptr = shape_tap_image(ptr);
+	}
 	return ptr;
+}
+
+// many tap images are sampled from tapes, with half cycles too uneven for the ipl to time:
+// make each half cycle exactly short or long. the threshold is found for high and low halves
+// apart, as a sampled tape is rarely half high and half low, and every half cycle is judged
+// on its own, as the x1 writes a cycle low half first and a sampled tape may be inverted
+int DATAREC::shape_tap_image(int samples)
+{
+	// half cycles from 1/14400 to 1/800 sec: shorter is noise, longer is a gap
+	int min_len = max(1, (int)(sample_rate / 14400.0 + 0.5)), max_len = (int)(sample_rate / 800.0 + 0.5);
+	double mean_short[2], mean_long[2];
+	
+	for(int level = 0; level < 2; level++) {
+		// two means: start from the mean of all half cycles, then split at the middle of the two
+		double threshold = 0;
+		for(int pass = 0; pass < 8; pass++) {
+			double sum[2] = {0, 0};
+			int count[2] = {0, 0};
+			for(int i = 0, top = 0; i <= samples; i++) {
+				if(i == samples || (buffer[i] != 0) != (buffer[top] != 0)) {
+					int len = i - top;
+					if((buffer[top] != 0) == (level != 0) && top != 0 && len >= min_len && len <= max_len) {
+						int n = (pass == 0 || len < threshold) ? 0 : 1;
+						sum[n] += len;
+						count[n]++;
+					}
+					top = i;
+				}
+			}
+			if(pass == 0) {
+				if(count[0] == 0) {
+					return samples;
+				}
+				threshold = sum[0] / count[0];
+				continue;
+			}
+			if(count[0] == 0 || count[1] == 0) {
+				return samples;
+			}
+			mean_short[level] = sum[0] / count[0];
+			mean_long[level] = sum[1] / count[1];
+			threshold = (mean_short[level] + mean_long[level]) / 2;
+		}
+	}
+	int short_len = max(1, (int)((mean_short[0] + mean_short[1]) / 2 + 0.5));
+	int long_len = max(short_len + 1, (int)((mean_long[0] + mean_long[1]) / 2 + 0.5));
+	double threshold[2] = {(mean_short[0] + mean_long[0]) / 2, (mean_short[1] + mean_long[1]) / 2};
+	
+	// a half cycle grows at most to long_len
+	uint8_t *shaped = (uint8_t *)malloc(samples * long_len / min_len + 1);
+	int out = 0;
+	for(int i = 0, top = 0; i <= samples; i++) {
+		if(i == samples || (buffer[i] != 0) != (buffer[top] != 0)) {
+			int len = i - top, level = (buffer[top] != 0) ? 1 : 0;
+			if(top != 0 && i != samples && len >= min_len && len <= max_len) {
+				len = (len < threshold[level]) ? short_len : long_len;
+			}
+			for(int j = 0; j < len; j++) {
+				shaped[out++] = level ? 255 : 0;
+			}
+			top = i;
+		}
+	}
+	free(buffer);
+	buffer = shaped;
+	return out;
 }
 
 // SHARP MZ series tape image

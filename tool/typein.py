@@ -14,6 +14,7 @@ import argparse, json, math, os, re, shutil, subprocess, sys, unicodedata
 from pathlib import Path
 
 # boot: script lines that bring the machine to its BASIC prompt ({basic} is the --basic file)
+# max_line: the most characters BASIC takes in one typed line; it drops the rest
 # prompt: the row BASIC prints when it is ready; errors: substrings of its error messages
 # tape: (recording extension, save command, load command); disk: (save command, load command); {name} is the file name
 # list: the LIST command for a range of lines; name: the longest file name; keys: types with keys, not auto key
@@ -28,7 +29,11 @@ MACHINES = {
     'msx1': dict(boot='frames 600', prompt='Ok', errors='error', list='LIST {a}-{b}',
                  tape=('.wav', 'CSAVE"{name}"', 'CLOAD"{name}"'), name=6),
     'pc6001': dict(boot='frames 600\ntype {RETURN}\nframes 100', prompt='Ok', errors='error', list='LIST {a}-{b}',
-                   tape=('.p6', 'CSAVE"{name}"', 'CLOAD"{name}"'), name=6),
+                   tape=('.p6', 'CSAVE"{name}"', 'CLOAD"{name}"'), name=6, max_line=71),
+    # mode 5 (N60m-BASIC), the default number of files, 4 pages
+    'pc6001mk2': dict(boot='frames 400\ntype 5\nframes 200\ntype {RETURN}\nframes 100\ntype 4{RETURN}\nframes 300',
+                      prompt='Ok', errors='error', list='LIST {a}-{b}',
+                      tape=('.p6', 'CSAVE"{name}"', 'CLOAD"{name}"'), name=6, max_line=71),
     'mz700': dict(boot='frames 300\ntype L\\n\nframes 60\ntape {basic}\nframes 13200', prompt='Ready', errors='error', list='LIST {a}-{b}',
                   tape=('.wav', 'SAVE"{name}"', 'LOAD"{name}"'), name=16, basic='tape', eject_basic=True, line_gap=30),
     'x1': dict(boot='frames 1500\ntype {RETURN}\nframes 100', prompt='Ok', errors='error', list='LIST {a}-{b}',
@@ -92,6 +97,31 @@ def to_compare(s):
             out.append('PRINT' if c == '?' else c.upper())
     # LET is optional, and some BASICs list it where it was left out
     return re.sub(r'(^\d+|:)LET', r'\1', ''.join(out))
+
+
+def shorten(line):
+    """line typed in fewer characters, listing the same: ? for PRINT, no spaces beside punctuation outside strings,
+    up to a REM, ' or DATA, whose text is kept as it is"""
+    out, quoted, i = [], False, 0
+    while i < len(line):
+        c = line[i]
+        if c == '"':
+            quoted = not quoted
+        elif not quoted:
+            rest = line[i:].upper()
+            if rest.startswith(('REM', "'", 'DATA')):
+                return ''.join(out) + line[i:]
+            if rest.startswith('PRINT'):
+                out.append('?')
+                i += 5
+                continue
+            # a space between letters or digits stays: S TO T is not STOT
+            if c == ' ' and not (out and out[-1][-1].isalnum() and line[i + 1:i + 2].isalnum()):
+                i += 1
+                continue
+        out.append(c)
+        i += 1
+    return ''.join(out)
 
 
 def parse_listing(text):
@@ -200,7 +230,16 @@ def main():
     name = a.name[:m['name']] if m['name'] else ''
     a.out.mkdir(parents=True)
     out = a.out.resolve()
-    (out / 'listing.txt').write_text('\n'.join(t for _, t in expected) + '\n', encoding='utf-8')
+    typing, too_long = [], []
+    for n, t in expected:
+        if len(t) > m.get('max_line', len(t)):
+            t = shorten(t)
+            if len(t) > m['max_line']:
+                too_long.append({'line': n, 'length': len(t)})
+                print(f'typein: line {n}: {len(t)} characters even shortened; {a.machine} BASIC takes {m["max_line"]}',
+                      file=sys.stderr)
+        typing.append(t)
+    (out / 'listing.txt').write_text('\n'.join(typing) + '\n', encoding='utf-8')
     basic = str(a.basic.resolve()) if a.basic else ''
     media = ['--disk-a', basic] if m.get('basic') == 'disk' else []
     boot = m['boot'].replace('{basic}', basic)
@@ -248,7 +287,7 @@ def main():
     (out / 'listing.script').write_text('\n'.join(s) + '\n')
     record = run(exe, rom, out / 'type', out / 'listing.script', extra)
     typed = compare(expected, read_lists(out / 'type', m, ranges, expected))
-    report = {'machine': a.machine, 'lines': len(expected), 'untypeable': untypeable,
+    report = {'machine': a.machine, 'lines': len(expected), 'untypeable': untypeable, 'too_long': too_long,
               'screen_errors': record.get('screen_errors', []),
               'typed': {'mismatches': typed}}
 

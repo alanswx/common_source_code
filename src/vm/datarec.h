@@ -87,6 +87,7 @@ private:
 	void save_wav_image();
 	int load_t77_image();
 	int load_tap_image();
+	int shape_tap_image(int samples);
 	int load_mzt_image();
 	int load_p6_image(bool is_p6t);
 	int load_bmjr_image();
