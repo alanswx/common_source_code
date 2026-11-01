@@ -51,9 +51,9 @@ original CLIs.
 | `--joy FRAME:PORT:BITS` | Joystick state from FRAME |
 | `--reset-at FRAME`, `--special-reset-at FRAME` | Reset; the machine's special reset |
 | `--screenshot FRAME`, `--dump-every N`, `--final-screenshot` | `OUT/frame_NNNNNN.png` |
-| `--trace-cpu FILE` | Every instruction (Z80 and MC6800 machines) |
+| `--trace-cpu FILE` | Every instruction (Z80, MC6800 and MC6809 machines). On the FM-7 family both 6809s are traced: `frame,clock,cpu,pc,a,b,x,y,u,s,dp,cc,opcode,instruction`, with `cpu` 0 main and 1 sub, the clock the main CPU's, and the instruction from CSCP's debugger disassembler. Tracing does not change the run (identical `frames.csv`) |
 | `--trace-io FILE` | Every I/O access (X1, SMC-777, Basic Master Jr.) |
-| `--trace-from F`, `--trace-to F`, `--watch-pc ADDR,...` | Trace window; instruction counts at addresses |
+| `--trace-from F`, `--trace-to F`, `--watch-pc ADDR,...` | Trace window; instruction counts at addresses (the main CPU on the FM-7). A machine whose CPU has no trace hook ends with an error rather than empty counts |
 | `--poke ADDR=BYTES@FRAME`, `--dump-mem ADDR:LEN@FRAME`, `--dump-memory FILE` | 64 KiB through the CPU's debugger view (hex) |
 | `--wav FILE` | The mixed sound output |
 | `--monitor-type N` | The machine's Monitor Type menu item, 0 = first (machines with that menu) |

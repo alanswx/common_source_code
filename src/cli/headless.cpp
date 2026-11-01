@@ -37,6 +37,7 @@
 // CPU trace hooks live in z80.cpp and mc6800.cpp; these weak definitions serve targets without that CPU.
 __attribute__((weak)) void (*z80_trace_hook)(uint16_t,uint16_t,uint16_t,uint16_t,uint16_t,uint16_t) = nullptr;
 __attribute__((weak)) void (*mc6800_trace_hook)(uint16_t,uint8_t,uint8_t,uint16_t,uint16_t,uint8_t) = nullptr;
+__attribute__((weak)) void (*mc6809_trace_hook)(DEVICE*,uint16_t,uint8_t,uint8_t,uint16_t,uint16_t,uint16_t,uint16_t,uint8_t,uint8_t) = nullptr;
 extern void (*fileio_read_miss_hook)(const _TCHAR *path);
 void (*cli_sound_hook)(const uint16_t *buffer, int samples, int rate) = nullptr;
 #if defined(_X1) || defined(_X1TURBO) || defined(_X1TURBOZ) || defined(_X1TWIN)
@@ -57,6 +58,7 @@ namespace {
 EMU *machine = nullptr;
 FILE *cpu_trace = nullptr, *io_trace = nullptr, *wav = nullptr;
 int current_frame = 0, trace_from = 0, trace_to = INT_MAX, wav_rate = 44100;
+bool cpu_hooked = false;	// a CPU trace hook ran: --trace-cpu and --watch-pc have something to report
 uint32_t wav_frames = 0;
 std::map<uint16_t,unsigned long> watch;
 std::string rom_dir_prefix;
@@ -227,7 +229,7 @@ time_t parse_host_time(const std::string &s) {
     return t;
 }
 bool tracing() { return current_frame>=trace_from && current_frame<=trace_to; }
-void count_watch(uint16_t pc) { if(!watch.empty()) { auto it=watch.find(pc);if(it!=watch.end()) it->second++; } }
+void count_watch(uint16_t pc) { cpu_hooked=true;if(!watch.empty()) { auto it=watch.find(pc);if(it!=watch.end()) it->second++; } }
 void trace_z80(uint16_t pc,uint16_t sp,uint16_t af,uint16_t bc,uint16_t de,uint16_t hl) {
     count_watch(pc);
     if(!cpu_trace || !tracing()) return;
@@ -239,6 +241,19 @@ void trace_mc6800(uint16_t pc,uint8_t a,uint8_t b,uint16_t x,uint16_t sp,uint8_t
     if(!cpu_trace || !tracing()) return;
     DEVICE *cpu=machine->get_vm()->get_cpu(0);
     fprintf(cpu_trace,"%d,%u,%04x,%02x,%02x,%04x,%04x,%02x,%02x\n",current_frame,cpu->get_current_clock(),pc,a,b,x,sp,cc,opcode_at(cpu,pc));
+}
+// the FM-7 family runs a main and a sub 6809: both are traced, --watch-pc counts the main one
+void trace_mc6809(DEVICE *cpu,uint16_t pc,uint8_t a,uint8_t b,uint16_t x,uint16_t y,uint16_t u,uint16_t s,uint8_t dp,uint8_t cc) {
+    DEVICE *main_cpu=machine->get_vm()->get_cpu(0);
+    if(cpu==main_cpu) count_watch(pc);
+    else cpu_hooked=true;
+    if(!cpu_trace || !tracing()) return;
+    _TCHAR instruction[128]="";
+#ifdef USE_DEBUGGER
+    cpu->debug_dasm(pc,instruction,sizeof(instruction)/sizeof(instruction[0]));	// reads the bytes at pc, as the debugger does
+#endif
+    fprintf(cpu_trace,"%d,%u,%d,%04x,%02x,%02x,%04x,%04x,%04x,%04x,%02x,%02x,%02x,\"%s\"\n",current_frame,main_cpu->get_current_clock(),
+            cpu==main_cpu ? 0 : 1,pc,a,b,x,y,u,s,dp,cc,opcode_at(cpu,pc),instruction);
 }
 #if defined(CLI_X1)
 void trace_io(bool write,uint16_t address,uint8_t data,int wait) {
@@ -258,6 +273,7 @@ const char *IO_HEADER="frame,clock,pc,kind,address,data\n";
 void hook(bool on) {
     z80_trace_hook=on ? trace_z80 : nullptr;
     mc6800_trace_hook=on ? trace_mc6800 : nullptr;
+    mc6809_trace_hook=on ? trace_mc6809 : nullptr;
 #if defined(CLI_X1)
     x1_cli_io_hook=on ? trace_io : nullptr;
 #elif defined(CLI_SMC777)
@@ -1112,6 +1128,8 @@ int retropc_headless(int argc,const char **argv) {
             cpu_trace=output(destination(o,o.cpu));
 #if defined(CLI_BMJR)
             fputs("frame,clock,pc,a,b,x,sp,cc,opcode\n",cpu_trace);
+#elif defined(HAS_MC6809)
+            fputs("frame,clock,cpu,pc,a,b,x,y,u,s,dp,cc,opcode,instruction\n",cpu_trace);
 #else
             fputs("frame,clock,pc,sp,af,bc,de,hl,opcode\n",cpu_trace);
 #endif
@@ -1170,7 +1188,6 @@ int retropc_headless(int argc,const char **argv) {
         if(host_time_start>=0) get_host_time_hook=fixed_host_time;
         emu.reset(new EMU());machine=emu.get();
         hook(true);
-        if(cpu_trace && !z80_trace_hook && !mc6800_trace_hook) throw std::runtime_error("--trace-cpu: no trace hook");
 
         for(int drv=0;drv<DRIVES && drv<4;drv++) if(!o.disk[drv].empty()) {
 #ifdef USE_FLOPPY_DISK
@@ -1266,6 +1283,8 @@ int retropc_headless(int argc,const char **argv) {
         if(io_trace && fclose(io_trace)) throw std::runtime_error("I/O trace write failed");io_trace=nullptr;
         if(paste_run.log && fclose(paste_run.log)) throw std::runtime_error("paste log write failed");paste_run.log=nullptr;
         hook(false);
+        if((!o.cpu.empty() || !watch.empty()) && !cpu_hooked)
+            throw std::runtime_error("--trace-cpu and --watch-pc trace Z80, MC6800 and MC6809 machines; this one ran no traced CPU");
         if(wav) { wav_header(wav);if(fclose(wav)) throw std::runtime_error("WAV write failed");wav=nullptr; }
         emu.reset();machine=nullptr;   // closes the disks, writing back writable copies
 

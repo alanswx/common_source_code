@@ -38,8 +38,11 @@ void MC6809::initialize()
 	}
 }
 
+void (*mc6809_trace_hook)(DEVICE *cpu, uint16_t pc, uint8_t a, uint8_t b, uint16_t x, uint16_t y, uint16_t u, uint16_t s, uint8_t dp, uint8_t cc) = nullptr;
+
 void MC6809::run_one_opecode()
 {
+	if(mc6809_trace_hook) mc6809_trace_hook(this, PC, A, B, X, Y, U, S, DP, CC);	// headless mode (cli/headless.cpp --trace-cpu)
 	if(__USE_DEBUGGER) {
 		bool now_debugging = d_debugger->now_debugging;
 		if(now_debugging) {
