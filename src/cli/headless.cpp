@@ -48,6 +48,9 @@ extern void (*smc777_cli_io_hook)(bool,uint16_t,uint8_t);
 #elif defined(_BMJR)
 #define CLI_BMJR
 extern void (*bmjr_cli_io_hook)(bool,uint16_t,uint8_t);
+#elif defined(_FM8) || defined(_FM7) || defined(_FMNEW7)
+#define CLI_FM_FDC_OPTION	// the floppy unit is an option: connected when a disk is given
+#include "../vm/fm7/fm7_common.h"
 #endif
 
 namespace {
@@ -73,6 +76,8 @@ struct Paste { int frame; std::vector<std::string> lines, source; };
 struct Options {
     std::string rom_dir, out, disk[4], disk_output[4], tape, record, qd, cart, cpu, io, memory, wav, script, font;
     int stop = -1, every = 0, press = 4, release = 4, line_gap = 0, after_paste = -1, monitor_type = -1, tape_at = 0;
+    int boot_mode = -1, cpu_type = -1, device_type = -1, drive_type = -1, keyboard_type = -1, sound_type = -1;	// -1: the default
+    long long dipswitch = -1, option_switch = -1;
     bool writable = false, final_shot = false, final_text = false;
     std::set<int> shots, resets, special_resets, texts;
     std::multimap<int,Key> keys;
@@ -83,6 +88,12 @@ struct Options {
     std::vector<Poke> pokes;
 };
 
+long long hex32(const std::string &option, const std::string &s) {
+    char *end = nullptr; errno=0;
+    unsigned long long n = strtoull(s.c_str(), &end, 16);
+    if(s.empty() || s[0]=='-' || errno || *end || n>0xffffffffULL) throw std::runtime_error(option+": expected up to 8 hex digits: "+s);
+    return (long long)n;
+}
 int number(const std::string &s, int base=10) {
     if(s.empty() || s[0]=='-') throw std::runtime_error("expected a nonnegative integer: "+s);
     char *end = nullptr; errno=0;
@@ -833,6 +844,33 @@ void help() {
 #ifdef USE_MONITOR_TYPE
         "  --monitor-type N              the machine's Monitor Type menu item (0 = first)\n"
 #endif
+#ifdef USE_BOOT_MODE
+        "  --boot-mode N                 the Boot menu item (0 = first; FM-7: 0 BASIC, 1 DOS)\n"
+#endif
+#ifdef USE_CPU_TYPE
+        "  --cpu-type N                  the CPU menu item (0 = first)\n"
+#endif
+#ifdef USE_DEVICE_TYPE
+        "  --device-type N               the Device menu item (0 = first)\n"
+#endif
+#ifdef USE_DRIVE_TYPE
+        "  --drive-type N                the Drive menu item (0 = first)\n"
+#endif
+#ifdef USE_KEYBOARD_TYPE
+        "  --keyboard-type N             the Keyboard menu item (0 = first)\n"
+#endif
+#ifdef USE_SOUND_TYPE
+        "  --sound-type N                the Sound menu item (0 = first)\n"
+#endif
+#ifdef USE_DIPSWITCH
+        "  --dipswitch HEX               the DIP switch word (bits as the VM defines them)\n"
+#endif
+#ifdef USE_OPTION_SWITCH
+        "  --option-switch HEX           the option switch word (bits as the VM defines them)\n"
+#endif
+#ifdef CLI_FM_FDC_OPTION
+        "                                a --disk-* connects the 320KB floppy unit unless --option-switch is given\n"
+#endif
         "Frames 0..N inclusive; scheduled actions precede a frame, captures follow it.\n"
         "OUT/frames.csv: frame,clock,width,height,pc,rgb_fnv1a64 for every frame; OUT/paste.csv per pasted line.\n"
         "The ROM directory is isolated: no saved config and no global ROM fallback.\n",
@@ -926,6 +964,30 @@ int retropc_headless(int argc,const char **argv) {
             else if(a=="--host-time") host_time_start=parse_host_time(next());
 #ifdef USE_MONITOR_TYPE
             else if(a=="--monitor-type") { o.monitor_type=number(next());if(o.monitor_type>=USE_MONITOR_TYPE) throw std::runtime_error("--monitor-type out of range"); }
+#endif
+#ifdef USE_BOOT_MODE
+            else if(a=="--boot-mode") { o.boot_mode=number(next());if(o.boot_mode>=USE_BOOT_MODE) throw std::runtime_error("--boot-mode out of range"); }
+#endif
+#ifdef USE_CPU_TYPE
+            else if(a=="--cpu-type") { o.cpu_type=number(next());if(o.cpu_type>=USE_CPU_TYPE) throw std::runtime_error("--cpu-type out of range"); }
+#endif
+#ifdef USE_DEVICE_TYPE
+            else if(a=="--device-type") { o.device_type=number(next());if(o.device_type>=USE_DEVICE_TYPE) throw std::runtime_error("--device-type out of range"); }
+#endif
+#ifdef USE_DRIVE_TYPE
+            else if(a=="--drive-type") { o.drive_type=number(next());if(o.drive_type>=USE_DRIVE_TYPE) throw std::runtime_error("--drive-type out of range"); }
+#endif
+#ifdef USE_KEYBOARD_TYPE
+            else if(a=="--keyboard-type") { o.keyboard_type=number(next());if(o.keyboard_type>=USE_KEYBOARD_TYPE) throw std::runtime_error("--keyboard-type out of range"); }
+#endif
+#ifdef USE_SOUND_TYPE
+            else if(a=="--sound-type") { o.sound_type=number(next());if(o.sound_type>=USE_SOUND_TYPE) throw std::runtime_error("--sound-type out of range"); }
+#endif
+#ifdef USE_DIPSWITCH
+            else if(a=="--dipswitch") o.dipswitch=hex32(a,next());
+#endif
+#ifdef USE_OPTION_SWITCH
+            else if(a=="--option-switch") o.option_switch=hex32(a,next());
 #endif
             else throw std::runtime_error("unknown option: "+a);
         }
@@ -1076,6 +1138,33 @@ int retropc_headless(int argc,const char **argv) {
 #endif
 #ifdef USE_MONITOR_TYPE
         if(o.monitor_type>=0) config.monitor_type=o.monitor_type;
+#endif
+#ifdef USE_BOOT_MODE
+        if(o.boot_mode>=0) config.boot_mode=o.boot_mode;
+#endif
+#ifdef USE_CPU_TYPE
+        if(o.cpu_type>=0) config.cpu_type=o.cpu_type;
+#endif
+#ifdef USE_DEVICE_TYPE
+        if(o.device_type>=0) config.device_type=o.device_type;
+#endif
+#ifdef USE_DRIVE_TYPE
+        if(o.drive_type>=0) config.drive_type=o.drive_type;
+#endif
+#ifdef USE_KEYBOARD_TYPE
+        if(o.keyboard_type>=0) config.keyboard_type=o.keyboard_type;
+#endif
+#ifdef USE_SOUND_TYPE
+        if(o.sound_type>=0) config.sound_type=o.sound_type;
+#endif
+#ifdef USE_DIPSWITCH
+        if(o.dipswitch>=0) config.dipswitch=uint32_t(o.dipswitch);
+#endif
+#ifdef USE_OPTION_SWITCH
+        if(o.option_switch>=0) config.option_switch=int(o.option_switch);
+#endif
+#ifdef CLI_FM_FDC_OPTION
+        if(o.option_switch<0) for(auto &d:o.disk) if(!d.empty()) config.option_switch|=FM7_OPTSW_CONNECT_320KFDC;
 #endif
         fileio_read_miss_hook=rom_miss;
         if(host_time_start>=0) get_host_time_hook=fixed_host_time;
