@@ -54,8 +54,9 @@ static std::vector<std::pair<int, std::string>> g_script_types;
 static FILE *g_trace_file = nullptr;
 static int g_trace_from = 0, g_trace_to = 0, g_script_frame_now = 0;
 // z80.cpp supplies it; cli/headless.cpp has a weak definition for targets without a Z80
-extern void (*z80_trace_hook)(uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl);
-static void script_trace(uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl)
+class DEVICE;
+extern void (*z80_trace_hook)(DEVICE *cpu, uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl);
+static void script_trace(DEVICE *cpu, uint16_t pc, uint16_t sp, uint16_t af, uint16_t bc, uint16_t de, uint16_t hl)
 {
 	if(g_trace_file && g_script_frame_now >= g_trace_from && g_script_frame_now <= g_trace_to)
 		fprintf(g_trace_file, "%d,%04X,%04X,%04X,%04X,%04X,%04X\n", g_script_frame_now, pc, sp, af, bc, de, hl);

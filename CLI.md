@@ -23,6 +23,9 @@ original CLIs.
 - `--rom-dir DIR` is the only place ROMs are read from. No saved `.ini` and no global ROM fallback is used. Files
   the VM tried to read there but could not find are listed in the JSON as `rom_files_not_found`. Some are
   optional, such as extra ROM banks and drive sound WAVs.
+- The ROM directory is never written. Files a machine saves there (battery RAM, PC-98 memory switches, printer
+  output) go to `OUT/data/` instead, starting from the original, and are listed as `data_files_written`.
+- Stdout carries only the JSON line; the emulated console and printers write to stderr.
 - `--out NEW_DIR` must not exist yet; its parent must. Relative output names resolve under it, and existing files
   are never overwritten.
 - Frames are numbered 0..N inclusive. Scheduled actions happen before a frame; captures happen after it.
@@ -51,9 +54,10 @@ original CLIs.
 | `--joy FRAME:PORT:BITS` | Joystick state from FRAME |
 | `--reset-at FRAME`, `--special-reset-at FRAME` | Reset; the machine's special reset |
 | `--screenshot FRAME`, `--dump-every N`, `--final-screenshot` | `OUT/frame_NNNNNN.png` |
-| `--trace-cpu FILE` | Every instruction (Z80, MC6800 and MC6809 machines). On the FM-7 family both 6809s are traced: `frame,clock,cpu,pc,a,b,x,y,u,s,dp,cc,opcode,instruction`, with `cpu` 0 main and 1 sub, the clock the main CPU's, and the instruction from CSCP's debugger disassembler. Tracing does not change the run (identical `frames.csv`) |
+| `--trace-cpu FILE` | Every instruction, on every machine; the format follows the main CPU (see [CPU traces](#cpu-traces)) |
+| `--trace-all-cpus FILE` | Every instruction of every CPU, disassembled: `frame,clock,cpu,pc,instruction,registers` |
 | `--trace-io FILE` | Every I/O access (X1, SMC-777, Basic Master Jr.) |
-| `--trace-from F`, `--trace-to F`, `--watch-pc ADDR,...` | Trace window; instruction counts at addresses (the main CPU on the FM-7). A machine whose CPU has no trace hook ends with an error rather than empty counts |
+| `--trace-from F`, `--trace-to F`, `--watch-pc ADDR,...` | Trace window; instruction counts at the main CPU's addresses (the low 16 bits of the linear address on x86) |
 | `--poke ADDR=BYTES@FRAME`, `--dump-mem ADDR:LEN@FRAME`, `--dump-memory FILE` | 64 KiB through the CPU's debugger view (hex) |
 | `--wav FILE` | The mixed sound output |
 | `--monitor-type N` | The machine's Monitor Type menu item, 0 = first (machines with that menu) |
@@ -66,6 +70,25 @@ original CLIs.
 
 `OUT/frames.csv` has one row per frame: frame, emulator clock, width, height, next PC and an FNV-1a-64 hash of
 the RGB picture.
+
+## CPU traces
+
+Every CPU core reports each instruction it starts through its debugger, so all 129 targets trace, and every
+core has a disassembler (CSCP's debugger's). `--trace-cpu` keeps the register columns that MiSTer simulations
+are compared against where the main CPU has them, and is disassembled everywhere else:
+
+| Main CPU | Targets | `--trace-cpu` columns |
+| --- | --- | --- |
+| Z80 | 66 | `frame,clock,pc,sp,af,bc,de,hl,opcode` (the main Z80 only) |
+| MC6800 family (6800, 6801, HD6301) | 6 | `frame,clock,pc,a,b,x,sp,cc,opcode` |
+| MC6809 (FM-7 family) | 7 | `frame,clock,cpu,pc,a,b,x,y,u,s,dp,cc,opcode,instruction` (main and sub) |
+| 8080/8085, 6502, HuC6280, TMS9995, uPD7801, uPD7810, 8086/V30, 80286, 80386/486, MCS-48 | 49 | `frame,clock,cpu,pc,instruction,registers` (every CPU) |
+
+`cpu` is the machine's CPU number (0 main), `clock` the main CPU's, `pc` the linear address on x86, and
+`registers` the debugger's register dump on one line. `--trace-all-cpus` writes the last format on any machine,
+including the second CPUs of the PC-8801 (disk), PC-6001 (8049), FP-1100 and FM-16β. Tracing does not change
+the run: `frames.csv` is identical with and without it. A run asking for a trace or `--watch-pc` that starts no
+traced instruction (no ROM, say) ends with an error.
 
 ## Pasting listings
 
@@ -191,6 +214,16 @@ Tested with a 36-line listing (long wrapped lines, kana, lowercase strings, `?`)
 | pc6001, pc6001mk2 | `.p6` | The 4 lines over 90 characters are too long for N60-BASIC even shortened, so it keeps 71 of each, which typein reports. Loaded back and checked. A 5-line listing with 70–76 character lines comes back identical once shortened. The mkII runs mode 5 |
 
 The runs are the same on macOS and Linux: the learned font and the saved tape are byte-identical.
+
+## Disks
+
+`--disk-a`..`--disk-d` mount on all 89 targets with floppy drives. A blank 2D, 2DD and 2HD D88 mounts on 87;
+x1twin needs its IPL ROM to start, and the SVI-318/328 reads only raw SVI images (172,032 or 346,112 bytes).
+On the FM-7, FM-8 and FM-NEW7 a disk connects the optional floppy unit. Disks that boot: FM-7 (Thexder, F-BASIC
+v3.0), X1 (Hu-BASIC), PC-8801 and PC-8801MA (N88 Disk BASIC), MSX2 (Disk BASIC, running the disk's program),
+SMC-777 (System 1.2J), MZ-800 (Driller), MZ-2500 (its IPL reads the disk). The PC-98 ROM set tested (a 96 KB
+BIOS in every model's directory) restarts in a loop at FD800h on the PC-9801 and VM, so PC-98 disks are
+untested.
 
 ## Machine notes
 

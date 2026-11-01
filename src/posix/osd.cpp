@@ -419,19 +419,20 @@ void OSD::set_console_text_attribute(unsigned short attr)
 {
 }
 
+// the console (debugger, emulated printers) goes to stderr: the headless CLI's stdout carries its JSON record
 void OSD::write_console(const _TCHAR* buffer, unsigned int length)
 {
 	if(buffer) {
-		printf("%.*s", (int)length, buffer);
-		fflush(stdout);
+		fprintf(stderr, "%.*s", (int)length, buffer);
+		fflush(stderr);
 	}
 }
 
 void OSD::write_console_char(const char* buffer, unsigned int length)
 {
 	if(buffer) {
-		printf("%.*s", (int)length, buffer);
-		fflush(stdout);
+		fprintf(stderr, "%.*s", (int)length, buffer);
+		fflush(stderr);
 	}
 }
 

@@ -37,6 +37,9 @@ typedef struct {
 	bool mode;	// 32bit protected mode in i386, or 8080 mode in NEC V30
 } cpu_trace_t;
 
+// every instruction a cpu starts, before the repeat filter below (cli/headless.cpp --trace-cpu, --watch-pc)
+extern void (*debugger_trace_hook)(DEVICE *debugger, uint32_t pc, uint32_t eip, bool mode);
+
 class DEBUGGER : public DEVICE
 {
 private:
@@ -496,6 +499,7 @@ public:
 	}
 	void add_cpu_trace(uint32_t pc, uint32_t eip, bool mode)
 	{
+		if(debugger_trace_hook) debugger_trace_hook(this, pc, eip, mode);
 		if(prev_cpu_trace != pc) {
 			cpu_trace[cpu_trace_ptr].pc = prev_cpu_trace = pc;
 			cpu_trace[cpu_trace_ptr].eip = eip;

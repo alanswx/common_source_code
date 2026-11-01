@@ -83,6 +83,8 @@ FILEIO::~FILEIO(void)
 
 // headless front end (cli/headless.cpp): told about every file that cannot be opened for reading
 void (*fileio_read_miss_hook)(const _TCHAR *path) = NULL;
+// headless runs (cli/headless.cpp): where a file opened for writing goes instead, so the data directory stays as it was
+const _TCHAR *(*fileio_write_path_hook)(const _TCHAR *path) = NULL;
 
 #if defined(__APPLE__)
 #include "mac/mac_logger.h"
@@ -370,6 +372,9 @@ bool FILEIO::Fopen(const _TCHAR *file_path, int mode)
 {
 	Fclose();
 	
+	if(fileio_write_path_hook && mode != FILEIO_READ_BINARY && mode != FILEIO_READ_ASCII) {
+		file_path = fileio_write_path_hook(file_path);
+	}
 	// store file path
 	my_tcscpy_s(path, _MAX_PATH, file_path);
 	open_mode = mode;

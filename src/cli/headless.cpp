@@ -11,6 +11,7 @@
 #include "../config.h"
 #include "../fileio.h"
 #include "../vm/device.h"
+#include "../vm/debugger.h"
 #include "headless.h"
 #include "paste.h"
 #include "screen_text.h"
@@ -35,10 +36,11 @@
 #include <unistd.h>
 
 // CPU trace hooks live in z80.cpp and mc6800.cpp; these weak definitions serve targets without that CPU.
-__attribute__((weak)) void (*z80_trace_hook)(uint16_t,uint16_t,uint16_t,uint16_t,uint16_t,uint16_t) = nullptr;
-__attribute__((weak)) void (*mc6800_trace_hook)(uint16_t,uint8_t,uint8_t,uint16_t,uint16_t,uint8_t) = nullptr;
+__attribute__((weak)) void (*z80_trace_hook)(DEVICE*,uint16_t,uint16_t,uint16_t,uint16_t,uint16_t,uint16_t) = nullptr;
+__attribute__((weak)) void (*mc6800_trace_hook)(DEVICE*,uint16_t,uint8_t,uint8_t,uint16_t,uint16_t,uint8_t) = nullptr;
 __attribute__((weak)) void (*mc6809_trace_hook)(DEVICE*,uint16_t,uint8_t,uint8_t,uint16_t,uint16_t,uint16_t,uint16_t,uint8_t,uint8_t) = nullptr;
 extern void (*fileio_read_miss_hook)(const _TCHAR *path);
+extern const _TCHAR *(*fileio_write_path_hook)(const _TCHAR *path);
 void (*cli_sound_hook)(const uint16_t *buffer, int samples, int rate) = nullptr;
 #if defined(_X1) || defined(_X1TURBO) || defined(_X1TURBOZ) || defined(_X1TWIN)
 #define CLI_X1
@@ -56,7 +58,7 @@ extern void (*bmjr_cli_io_hook)(bool,uint16_t,uint8_t);
 
 namespace {
 EMU *machine = nullptr;
-FILE *cpu_trace = nullptr, *io_trace = nullptr, *wav = nullptr;
+FILE *cpu_trace = nullptr, *all_trace = nullptr, *io_trace = nullptr, *wav = nullptr;
 int current_frame = 0, trace_from = 0, trace_to = INT_MAX, wav_rate = 44100;
 bool cpu_hooked = false;	// a CPU trace hook ran: --trace-cpu and --watch-pc have something to report
 uint32_t wav_frames = 0;
@@ -76,7 +78,7 @@ struct Dump { int frame; unsigned addr, len; };
 struct Poke { int frame; unsigned addr; std::vector<uint8_t> bytes; };
 struct Paste { int frame; std::vector<std::string> lines, source; };
 struct Options {
-    std::string rom_dir, out, disk[4], disk_output[4], tape, record, qd, cart, cpu, io, memory, wav, script, font;
+    std::string rom_dir, out, disk[4], disk_output[4], tape, record, qd, cart, cpu, all_cpus, io, memory, wav, script, font;
     int stop = -1, every = 0, press = 4, release = 4, line_gap = 0, after_paste = -1, monitor_type = -1, tape_at = 0;
     int boot_mode = -1, cpu_type = -1, device_type = -1, drive_type = -1, keyboard_type = -1, sound_type = -1;	// -1: the default
     long long dipswitch = -1, option_switch = -1;
@@ -229,31 +231,75 @@ time_t parse_host_time(const std::string &s) {
     return t;
 }
 bool tracing() { return current_frame>=trace_from && current_frame<=trace_to; }
-void count_watch(uint16_t pc) { cpu_hooked=true;if(!watch.empty()) { auto it=watch.find(pc);if(it!=watch.end()) it->second++; } }
-void trace_z80(uint16_t pc,uint16_t sp,uint16_t af,uint16_t bc,uint16_t de,uint16_t hl) {
-    count_watch(pc);
-    if(!cpu_trace || !tracing()) return;
-    DEVICE *cpu=machine->get_vm()->get_cpu(0);
+void count_watch(uint16_t pc) { if(!watch.empty()) { auto it=watch.find(pc);if(it!=watch.end()) it->second++; } }
+// --trace-cpu keeps the register columns of the Z80, MC6800 and MC6809 machines (compared with MiSTer simulations);
+// other machines, and --trace-all-cpus on any machine, get a row per instruction of every cpu from its debugger.
+// The main cpu's first instruction fixes the format: a cpu's own hook runs before its debugger's.
+enum TraceFormat { TRACE_UNDECIDED, TRACE_Z80, TRACE_MC6800, TRACE_MC6809, TRACE_GENERIC } trace_format = TRACE_UNDECIDED;
+const char *GENERIC_TRACE_HEADER="frame,clock,cpu,pc,instruction,registers\n";
+std::map<const void*,int> cpu_numbers;	// a cpu, or its debugger -> its get_cpu() number, -1 for none
+int cpu_number(const void *device) {
+    auto it=cpu_numbers.find(device);
+    if(it!=cpu_numbers.end()) return it->second;
+    int n=-1;
+    for(int i=0;i<8 && n<0;i++) {
+        DEVICE *cpu=machine->get_vm()->get_cpu(i);
+        if(!cpu) break;
+        if(cpu==device || cpu->get_debugger()==device) n=i;
+    }
+    return cpu_numbers[device]=n;
+}
+bool legacy_trace(TraceFormat format,DEVICE *cpu,const char *header) {
+    if(!cpu_trace) return false;
+    if(trace_format==TRACE_UNDECIDED && cpu_number(cpu)==0) { trace_format=format;fputs(header,cpu_trace); }
+    return trace_format==format && tracing();
+}
+void trace_z80(DEVICE *cpu,uint16_t pc,uint16_t sp,uint16_t af,uint16_t bc,uint16_t de,uint16_t hl) {
+    if(!legacy_trace(TRACE_Z80,cpu,"frame,clock,pc,sp,af,bc,de,hl,opcode\n") || cpu_number(cpu)!=0) return;   // the main Z80 only
     fprintf(cpu_trace,"%d,%u,%04x,%04x,%04x,%04x,%04x,%04x,%02x\n",current_frame,cpu->get_current_clock(),pc,sp,af,bc,de,hl,opcode_at(cpu,pc));
 }
-void trace_mc6800(uint16_t pc,uint8_t a,uint8_t b,uint16_t x,uint16_t sp,uint8_t cc) {
-    count_watch(pc);
-    if(!cpu_trace || !tracing()) return;
-    DEVICE *cpu=machine->get_vm()->get_cpu(0);
+void trace_mc6800(DEVICE *cpu,uint16_t pc,uint8_t a,uint8_t b,uint16_t x,uint16_t sp,uint8_t cc) {
+    if(!legacy_trace(TRACE_MC6800,cpu,"frame,clock,pc,a,b,x,sp,cc,opcode\n") || cpu_number(cpu)!=0) return;
     fprintf(cpu_trace,"%d,%u,%04x,%02x,%02x,%04x,%04x,%02x,%02x\n",current_frame,cpu->get_current_clock(),pc,a,b,x,sp,cc,opcode_at(cpu,pc));
 }
-// the FM-7 family runs a main and a sub 6809: both are traced, --watch-pc counts the main one
+// the FM-7 family runs a main and a sub 6809: both are traced
 void trace_mc6809(DEVICE *cpu,uint16_t pc,uint8_t a,uint8_t b,uint16_t x,uint16_t y,uint16_t u,uint16_t s,uint8_t dp,uint8_t cc) {
-    DEVICE *main_cpu=machine->get_vm()->get_cpu(0);
-    if(cpu==main_cpu) count_watch(pc);
-    else cpu_hooked=true;
-    if(!cpu_trace || !tracing()) return;
+    if(!legacy_trace(TRACE_MC6809,cpu,"frame,clock,cpu,pc,a,b,x,y,u,s,dp,cc,opcode,instruction\n")) return;
     _TCHAR instruction[128]="";
-#ifdef USE_DEBUGGER
     cpu->debug_dasm(pc,instruction,sizeof(instruction)/sizeof(instruction[0]));	// reads the bytes at pc, as the debugger does
-#endif
-    fprintf(cpu_trace,"%d,%u,%d,%04x,%02x,%02x,%04x,%04x,%04x,%04x,%02x,%02x,%02x,\"%s\"\n",current_frame,main_cpu->get_current_clock(),
-            cpu==main_cpu ? 0 : 1,pc,a,b,x,y,u,s,dp,cc,opcode_at(cpu,pc),instruction);
+    fprintf(cpu_trace,"%d,%u,%d,%04x,%02x,%02x,%04x,%04x,%04x,%04x,%02x,%02x,%02x,\"%s\"\n",current_frame,
+            machine->get_vm()->get_cpu(0)->get_current_clock(),cpu_number(cpu),pc,a,b,x,y,u,s,dp,cc,opcode_at(cpu,pc),instruction);
+}
+// a CSV field: one line, runs of white space as one space, quotes doubled
+std::string csv_text(const _TCHAR *text) {
+    std::string out;
+    for(const _TCHAR *p=text;*p;p++) {
+        char c=char(*p);
+        if(c=='\n' || c=='\r' || c=='\t') c=' ';
+        if(c==' ' && (out.empty() || out.back()==' ')) continue;
+        if(c=='"') out+='"';
+        out+=c;
+    }
+    while(!out.empty() && out.back()==' ') out.pop_back();
+    return "\""+out+"\"";
+}
+// every cpu's debugger reports each instruction it starts: pc is the linear address on x86 (eip and mode for its disassembler)
+void trace_debugger(DEVICE *debugger,uint32_t pc,uint32_t eip,bool mode) {
+    int n=cpu_number(debugger);
+    cpu_hooked=true;
+    if(n==0) count_watch(uint16_t(pc));
+    if(cpu_trace && trace_format==TRACE_UNDECIDED && n==0) { trace_format=TRACE_GENERIC;fputs(GENERIC_TRACE_HEADER,cpu_trace); }
+    FILE *generic=(cpu_trace && trace_format==TRACE_GENERIC) ? cpu_trace : nullptr;
+    if((!generic && !all_trace) || n<0 || !tracing()) return;
+    DEVICE *cpu=machine->get_vm()->get_cpu(n);
+    _TCHAR instruction[256]=_T(""),registers[1024]=_T("");
+    cpu->debug_dasm(pc,eip,mode,instruction,sizeof(instruction)/sizeof(instruction[0]));
+    cpu->get_debug_regs_info(registers,sizeof(registers)/sizeof(registers[0]));
+    char row[1536];
+    snprintf(row,sizeof(row),"%d,%u,%d,%04x,%s,%s\n",current_frame,machine->get_vm()->get_cpu(0)->get_current_clock(),n,pc,
+             csv_text(instruction).c_str(),csv_text(registers).c_str());
+    if(generic) fputs(row,generic);
+    if(all_trace) fputs(row,all_trace);
 }
 #if defined(CLI_X1)
 void trace_io(bool write,uint16_t address,uint8_t data,int wait) {
@@ -274,6 +320,7 @@ void hook(bool on) {
     z80_trace_hook=on ? trace_z80 : nullptr;
     mc6800_trace_hook=on ? trace_mc6800 : nullptr;
     mc6809_trace_hook=on ? trace_mc6809 : nullptr;
+    debugger_trace_hook=(on && (cpu_trace || all_trace || !watch.empty())) ? trace_debugger : nullptr;	// costs a lookup per instruction
 #if defined(CLI_X1)
     x1_cli_io_hook=on ? trace_io : nullptr;
 #elif defined(CLI_SMC777)
@@ -282,6 +329,28 @@ void hook(bool on) {
     bmjr_cli_io_hook=on ? trace_io : nullptr;
 #endif
     if(!on) { cli_sound_hook=nullptr;fileio_read_miss_hook=nullptr; }
+}
+// files a machine writes in the ROM directory (battery RAM, memory switches, printer output) go to OUT/data
+// instead; the first write starts from the original, so a file opened for update keeps its contents
+std::string data_out;
+std::set<std::string> data_written;
+const _TCHAR *redirect_write(const _TCHAR *path) {
+    static std::string target;
+    std::string p=path;
+    if(rom_dir_prefix.empty() || p.compare(0,rom_dir_prefix.size(),rom_dir_prefix)!=0) return path;
+    std::string name=p.substr(rom_dir_prefix.size());
+    for(auto &c:name) if(c=='/') c='_';
+    mkdir(data_out.c_str(),0755);
+    target=data_out+"/"+name;
+    struct stat st;
+    if(stat(target.c_str(),&st)!=0) {
+        std::vector<uint8_t> original;
+        if(stat(p.c_str(),&st)==0) original=read_file(p);
+        FILE *f=fopen(target.c_str(),"wb");
+        if(f) { if(!original.empty()) fwrite(original.data(),1,original.size(),f);fclose(f); }
+    }
+    data_written.insert(name);
+    return target.c_str();
 }
 void rom_miss(const _TCHAR *path) {
     std::string p=path;
@@ -841,7 +910,9 @@ void help() {
         "  --reset-at FRAME              reset;  --special-reset-at FRAME  the machine's special reset\n"
         "Output:\n"
         "  --screenshot FRAME (repeatable), --dump-every N, --final-screenshot   OUT/frame_NNNNNN.png\n"
-        "  --trace-cpu FILE  Z80/MC6800 targets: every instruction;  --trace-io FILE  X1, SMC-777, BMJR\n"
+        "  --trace-cpu FILE  every instruction of the main cpu (both 6809s on the FM-7), disassembled except on\n"
+        "                    Z80 and MC6800 machines, which keep their register columns;  --trace-io FILE  X1, SMC-777, BMJR\n"
+        "  --trace-all-cpus FILE   every instruction of every cpu: frame,clock,cpu,pc,instruction,registers\n"
         "  --trace-from FRAME --trace-to FRAME   inclusive trace window;  --watch-pc ADDR[,ADDR...]\n"
         "  --poke ADDR=BYTES@FRAME  --dump-mem ADDR:LEN@FRAME  --dump-memory FILE   (64 KiB, hex)\n"
         "  --wav FILE                    the mixed sound output (16-bit stereo, the VM's rate)\n"
@@ -973,6 +1044,7 @@ int retropc_headless(int argc,const char **argv) {
                 }
             }
             else if(a=="--trace-cpu") o.cpu=next();
+            else if(a=="--trace-all-cpus") o.all_cpus=next();
             else if(a=="--trace-io") o.io=next();
             else if(a=="--trace-from") trace_from=number(next());
             else if(a=="--trace-to") trace_to=number(next());
@@ -1124,16 +1196,8 @@ int retropc_headless(int argc,const char **argv) {
         // outputs
         setenv("RETROPC_CLI_DATA_DIR",o.rom_dir.c_str(),1);
         rom_dir_prefix=o.rom_dir+"/";
-        if(!o.cpu.empty()) {
-            cpu_trace=output(destination(o,o.cpu));
-#if defined(CLI_BMJR)
-            fputs("frame,clock,pc,a,b,x,sp,cc,opcode\n",cpu_trace);
-#elif defined(HAS_MC6809)
-            fputs("frame,clock,cpu,pc,a,b,x,y,u,s,dp,cc,opcode,instruction\n",cpu_trace);
-#else
-            fputs("frame,clock,pc,sp,af,bc,de,hl,opcode\n",cpu_trace);
-#endif
-        }
+        if(!o.cpu.empty()) cpu_trace=output(destination(o,o.cpu));	// the header follows the main cpu's first instruction
+        if(!o.all_cpus.empty()) { all_trace=output(destination(o,o.all_cpus));fputs(GENERIC_TRACE_HEADER,all_trace); }
 #if defined(CLI_X1) || defined(CLI_SMC777) || defined(CLI_BMJR)
         if(!o.io.empty()) { io_trace=output(destination(o,o.io));fputs(IO_HEADER,io_trace); }
 #endif
@@ -1185,6 +1249,7 @@ int retropc_headless(int argc,const char **argv) {
         if(o.option_switch<0) for(auto &d:o.disk) if(!d.empty()) config.option_switch|=FM7_OPTSW_CONNECT_320KFDC;
 #endif
         fileio_read_miss_hook=rom_miss;
+        data_out=o.out+"/data";fileio_write_path_hook=redirect_write;
         if(host_time_start>=0) get_host_time_hook=fixed_host_time;
         emu.reset(new EMU());machine=emu.get();
         hook(true);
@@ -1283,10 +1348,12 @@ int retropc_headless(int argc,const char **argv) {
         if(io_trace && fclose(io_trace)) throw std::runtime_error("I/O trace write failed");io_trace=nullptr;
         if(paste_run.log && fclose(paste_run.log)) throw std::runtime_error("paste log write failed");paste_run.log=nullptr;
         hook(false);
-        if((!o.cpu.empty() || !watch.empty()) && !cpu_hooked)
+        if(all_trace && fclose(all_trace)) throw std::runtime_error("CPU trace write failed");all_trace=nullptr;
+        if((!o.cpu.empty() || !o.all_cpus.empty() || !watch.empty()) && !cpu_hooked)
             throw std::runtime_error("--trace-cpu and --watch-pc trace Z80, MC6800 and MC6809 machines; this one ran no traced CPU");
         if(wav) { wav_header(wav);if(fclose(wav)) throw std::runtime_error("WAV write failed");wav=nullptr; }
         emu.reset();machine=nullptr;   // closes the disks, writing back writable copies
+        fileio_write_path_hook=nullptr;	// after the machine has saved its battery RAM
 
         // completion record: the machine-specific fields first, as the original per-machine CLIs printed them
         std::string json="{\"status\":\"complete\",\"model\":\""+std::string(CONFIG_NAME)+"\",\"completed_frames\":"+std::to_string(stop+1);
@@ -1359,6 +1426,11 @@ int retropc_headless(int argc,const char **argv) {
         std::string missing;
         for(auto &r:roms_not_found) missing+=(missing.empty() ? "" : ",")+json_string(r);
         field("rom_files_not_found","["+missing+"]");
+        if(!data_written.empty()) {
+            std::string w;
+            for(auto &r:data_written) w+=(w.empty() ? "" : ",")+json_string(r);
+            field("data_files_written","["+w+"]");	// in OUT/data
+        }
         const bool failed=!script.cmds.empty() && script.pc<script.cmds.size() && !script.stop;
         if(failed) json.replace(json.find("\"complete\""),10,"\"script_failed\"");
         printf("%s}\n",json.c_str());

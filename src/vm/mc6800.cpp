@@ -788,7 +788,7 @@ int MC6800::run(int clock)
 	}
 }
 
-void (*mc6800_trace_hook)(uint16_t pc, uint8_t a, uint8_t b, uint16_t x, uint16_t sp, uint8_t cc) = nullptr;
+void (*mc6800_trace_hook)(DEVICE *cpu, uint16_t pc, uint8_t a, uint8_t b, uint16_t x, uint16_t sp, uint8_t cc) = nullptr;
 
 void MC6800::run_one_opecode()
 {
@@ -797,7 +797,7 @@ void MC6800::run_one_opecode()
 	} else {
 		do {
 			one_more_insn = false;
-			if(mc6800_trace_hook) mc6800_trace_hook(PC, A, B, X, S, CC);	// headless mode (cli/headless.cpp --trace-cpu)
+			if(mc6800_trace_hook) mc6800_trace_hook(this, PC, A, B, X, S, CC);	// headless mode (cli/headless.cpp --trace-cpu)
 #ifdef USE_DEBUGGER
 			bool now_debugging = d_debugger->now_debugging;
 			if(now_debugging) {
