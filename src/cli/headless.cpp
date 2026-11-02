@@ -90,6 +90,7 @@ struct Options {
     std::vector<Paste> pastes;
     std::vector<Dump> dumps;
     std::vector<Poke> pokes;
+    std::vector<std::pair<int,std::pair<int,std::string>>> swaps;   // frame, drive, image
 };
 
 long long hex32(const std::string &option, const std::string &s) {
@@ -721,7 +722,7 @@ struct ScriptRun {
         auto slash=path.find_last_of('/');
         dir=slash==std::string::npos ? "." : path.substr(0,slash);
         static const std::set<std::string> ops={"frames","wait","idle","paste","line","type","text","shot","learn-font",
-            "font","errors","timeout","stop","reset","tape","record","eject","prompt","line-gap"};
+            "font","errors","timeout","stop","reset","tape","record","eject","prompt","line-gap","qd"};
         size_t pos=0;int number=0;
         while(pos<text.size()) {
             size_t nl=text.find('\n',pos);
@@ -782,6 +783,17 @@ struct ScriptRun {
         if(c.op=="line-gap") { o.line_gap=number(a);return true; }
         if(c.op=="stop") { stop=true;return true; }
         if(c.op=="reset") { machine->reset();fprintf(stderr,"[headless] reset before frame %d\n",current_frame);return true; }
+#ifdef USE_QUICK_DISK
+        if(c.op=="qd") {                    // eject and insert: turning a disk over starts it from the beginning
+            std::string path=absolute(relative(a));
+            machine->close_quick_disk(0);
+            machine->open_quick_disk(0,path.c_str());
+            fprintf(stderr,"[headless] Quick Disk before frame %d: %s\n",current_frame,path.c_str());
+            return true;
+        }
+#else
+        if(c.op=="qd") throw std::runtime_error("this machine has no Quick Disk drive");
+#endif
 #ifdef USE_TAPE
         if(c.op=="tape") {
             std::string path=absolute(relative(a));
@@ -894,6 +906,7 @@ void help() {
         "  --disk-output-a NEW_COPY ...  that drive's copy is writable and kept at NEW_COPY\n"
         "  --writable-disks              every drive's copy is writable\n"
         "  --tape FILE                   play from frame 0 (.wav .cas .mzt .p6 .t77 .tap .cmt ... as the VM reads)\n"
+        "  --swap-disk FRAME:DRIVE:FILE  eject DRIVE (a-d) and insert FILE before FRAME, writable as the drive is\n"
         "  --tape-at FRAME               insert the tape before FRAME instead (MZ: after the load command starts the motor)\n"
         "  --record-tape FILE            record to a new file in OUT (.wav .tap; .t77 on FM-7; PC-8001/8801 write .cmt)\n"
         "  --qd FILE  Quick Disk;  --cart FILE  cartridge\n"
@@ -1003,6 +1016,13 @@ int retropc_headless(int argc,const char **argv) {
             else if(a=="--writable-disks") o.writable=true;
             else if(a=="--tape") o.tape=next();
             else if(a=="--tape-at") o.tape_at=number(next());
+            else if(a=="--swap-disk") {
+                std::string v=next();
+                size_t c1=v.find(':');
+                if(c1==std::string::npos || c1+2>=v.size() || v[c1+2]!=':' || v[c1+1]<'a' || v[c1+1]>'d') throw std::runtime_error("--swap-disk expects FRAME:DRIVE:FILE, DRIVE a-d: "+v);
+                if(v[c1+1]-'a'>=DRIVES) throw std::runtime_error("this machine has no drive for --swap-disk "+v);
+                o.swaps.push_back({number(v.substr(0,c1)),{v[c1+1]-'a',v.substr(c1+3)}});
+            }
             else if(a=="--record-tape") o.record=next();
             else if(a=="--qd") o.qd=next();
             else if(a=="--cart") o.cart=next();
@@ -1088,6 +1108,7 @@ int retropc_headless(int argc,const char **argv) {
         if(!o.font.empty()) font.load(o.font);
         if((!o.texts.empty() || o.final_text) && !font.ready() && o.script.empty()) throw std::runtime_error("--text needs --font");
         for(auto f:o.resets) if(f>o.stop) throw std::runtime_error("reset after stop");
+        for(auto &sw:o.swaps) if(sw.first<1 || sw.first>o.stop) throw std::runtime_error("--swap-disk needs a frame within the run");
         if(o.tape_at<0 || o.tape_at>o.stop || (o.tape_at>0 && o.tape.empty())) throw std::runtime_error("--tape-at needs --tape and a frame within the run");
         for(auto f:o.special_resets) if(f>o.stop) throw std::runtime_error("reset after stop");
         for(auto &k:o.keys) if(k.first>o.stop) throw std::runtime_error("key event after stop");
@@ -1158,6 +1179,16 @@ int retropc_headless(int argc,const char **argv) {
 #else
             if(file_size(o.disk[drv])<=0) throw std::runtime_error("missing disk: "+o.disk[drv]);
             if(is_d88(o.disk[drv])) d88_check(read_file(o.disk[drv]));
+#endif
+        }
+        for(auto &sw:o.swaps) {
+            std::string &f=sw.second.second;
+            f=absolute(f);
+            if(file_size(f)<=0) throw std::runtime_error("missing disk: "+f);
+#if defined(CLI_X1)
+            d88_check(read_file(f));
+#else
+            if(is_d88(f)) d88_check(read_file(f));
 #endif
         }
         for(std::string *m:{&o.tape,&o.qd,&o.cart}) if(!m->empty()) {
@@ -1291,6 +1322,24 @@ int retropc_headless(int argc,const char **argv) {
                 if(!script.active()) stop=std::min(stop,current_frame);   // finished or failed: this frame is the last
             }
             if(o.resets.count(current_frame)) { machine->reset();fprintf(stderr,"[headless] reset before frame %d\n",current_frame); }
+#ifdef USE_FLOPPY_DISK
+            for(auto &sw:o.swaps) if(sw.first==current_frame) {   // eject and insert, like changing disks at a prompt
+                const int drv=sw.second.first;
+                const bool w=o.writable || !o.disk_output[drv].empty();
+#if defined(CLI_X1)
+                const std::string ext=".d88";
+#else
+                const std::string ext=extension(sw.second.second);
+#endif
+                const std::string copy=fresh_destination(o,std::string("disk-")+char('a'+drv)+"-frame"+std::to_string(current_frame)+ext);
+                private_copy(sw.second.second,copy,!w,is_d88(copy));
+                machine->close_floppy_disk(drv);
+                machine->open_floppy_disk(drv,copy.c_str(),0);
+                if(!machine->is_floppy_disk_inserted(drv)) throw std::runtime_error("disk insertion rejected: "+sw.second.second);
+                machine->is_floppy_disk_protected(drv,!w);
+                fprintf(stderr,"[headless] drive %c before frame %d: %s%s\n",'A'+drv,current_frame,sw.second.second.c_str(),w ? " (writable copy)" : "");
+            }
+#endif
 #ifdef USE_TAPE
             if(!o.tape.empty() && o.tape_at>0 && current_frame==o.tape_at) insert_tape();
 #endif

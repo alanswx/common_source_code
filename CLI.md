@@ -40,6 +40,7 @@ original CLIs.
 | `--disk-a FILE` .. `--disk-d FILE` | Floppy images, mounted as private copies `OUT/disk-a.<ext>`. D88 copies are write-protected |
 | `--disk-output-a NEW_COPY` .. | That drive's copy is writable and kept at `NEW_COPY` (use it to save a program to disk) |
 | `--writable-disks` | Every drive's copy is writable |
+| `--swap-disk FRAME:DRIVE:FILE` | Before FRAME, eject DRIVE (`a`-`d`) and insert a private copy of FILE as `OUT/disk-<drive>-frame<FRAME>.<ext>`, writable when that drive's copy would be (`--writable-disks` or `--disk-output-<drive>`). Repeatable; for games that ask for a disk change part way through |
 | `--tape FILE` | Play from frame 0, in any format the VM reads (`.wav .cas .mzt .p6 .p6t .t77 .tap .cmt` ...) |
 | `--tape-at FRAME` | Insert the tape before FRAME instead. MZ machines start playback only if the motor is already on, so insert after the load command |
 | `--record-tape FILE` | Record to a new file: `.wav` or `.tap` on most machines, `.t77` on FM-7. PC-8001/8801 always write a `.cmt` byte stream |
@@ -163,6 +164,7 @@ frames; `--stop-at-frame` still bounds the whole run.
 | `errors A\|B` | Report screen rows that newly contain A or B (case-insensitive) as `screen_errors`, with the pasted line they followed |
 | `text NAME`, `shot NAME` | The screen as text, or a PNG, in OUT |
 | `tape FILE`, `record NAME`, `eject` | Play a tape, record to `OUT/NAME`, or stop the tape |
+| `qd FILE` | Eject the Quick Disk and insert FILE (turning the disk over) |
 | `reset`, `stop` | Reset the machine; end the run |
 
 On the Basic Master Jr. and on machines without auto key, `paste` and `line` type with scheduled keys, one line at
