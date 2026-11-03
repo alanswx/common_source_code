@@ -224,6 +224,36 @@ void DATAREC::event_callback(int event_id, int err)
 				touch_sound();
 				write_signals(&outputs_ear, in_signal ? 0xffffffff : 0);
 			}
+#if defined(_X1) || defined(_X1TURBO) || defined(_X1TURBOZ) || defined(_X1TWIN)
+			// X1 APSS: a gap stops the search only after at least 1 s of
+			// continuous sound before it in the winding direction (a pause of
+			// 0.25 s or more ends a stretch). APSS forward keeps the stretch
+			// PLAY just read (Z Gundam: APSS right after a file stops in the
+			// next gap); APSS back counts afresh (Macadam: APSS back right
+			// after reading a header passes that file's gap and stops before
+			// the previous file).
+			if(in_signal != apss_x_level) {
+				apss_x_level = in_signal;
+				apss_x_quiet = 0;
+			} else if(apss_x_quiet < 0x40000000) {
+				apss_x_quiet++;
+			}
+			if(apss_x_quiet < sample_rate / 4) {
+				if(++apss_x_run >= sample_rate) {
+					apss_x_armed = true;
+				}
+			} else {
+				apss_x_run = 0;
+			}
+			if(apss_x_quiet >= sample_rate * 18 / 10) {
+				if(apss_remain != 0 && apss_x_armed) {
+					apss_remain += (apss_remain > 0) ? -1 : 1;
+				}
+				apss_x_armed = false;
+				apss_x_run = 0;
+			}
+#define APSS_X_RULE
+#endif
 			// chek apss state
 			if(apss_buffer != NULL) {
 				int ptr = (apss_ptr++) % (sample_rate * 2);
@@ -239,11 +269,13 @@ void DATAREC::event_callback(int event_id, int err)
 					double rate = (double)apss_count / (double)(sample_rate * 2);
 					if(rate > 0.9 || rate < 0.1) {
 						if(apss_signals) {
+#ifndef APSS_X_RULE
 							if(apss_remain > 0) {
 								apss_remain--;
 							} else if(apss_remain < 0) {
 								apss_remain++;
 							}
+#endif
 							write_signals(&outputs_apss, 0xffffffff);
 							apss_signals = false;
 						}
@@ -369,6 +401,14 @@ bool DATAREC::do_apss(int value)
 		set_remote(true);
 		set_ff_rew(value > 0 ? 1 : -1);
 		apss_remain = value;
+#ifdef APSS_X_RULE
+		if(value < 0) {
+			apss_x_armed = false;
+			apss_x_run = 0;
+		} else {
+			apss_x_armed = apss_x_armed && apss_x_quiet < sample_rate * 18 / 10;
+		}
+#endif
 		
 		while(apss_remain != 0 && remote) {
 			event_callback(EVENT_SIGNAL, 0);

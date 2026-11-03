@@ -66,6 +66,9 @@ private:
 	bool *apss_buffer;
 	int apss_ptr, apss_count, apss_remain;
 	bool apss_signals;
+	// X1 APSS rule (datarec.cpp): sound-stretch length before a gap
+	bool apss_x_level = false, apss_x_armed = false;
+	int apss_x_quiet = 0, apss_x_run = 0;
 	
 	int pcm_changed;
 	uint32_t pcm_prev_clock;
